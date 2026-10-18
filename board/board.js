@@ -1,0 +1,981 @@
+/*
+ * ui-ruling-board — the board.
+ *
+ * A classic script (no modules, no fetch) so that the page works from file://.
+ * It loads the round description (?round=<relative path>, default round.js),
+ * validates it, loads every image, and only then draws the board.
+ */
+(function () {
+  "use strict";
+
+  const VERSION = "0.1.0";
+  const NAME = "ui-ruling-board";
+  const PREFS = `${NAME}:prefs`;
+  const CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
+  const MARK = { none: "○", chosen: "●", hold: "◐" };
+  /** A view counts as seen when this share of its comparison frame is on screen (or it is zoomed). */
+  const SEEN_RATIO = 0.5;
+  const V = globalThis.RulingBoardValidate;
+
+  const numbered = (n) => (n <= CIRCLED.length ? CIRCLED[n - 1] : `(${n})`);
+
+  const store = {
+    get(key) {
+      try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : null;
+      } catch {
+        return null;
+      }
+    },
+    set(key, value) {
+      try {
+        localStorage.setItem(key, JSON.stringify(value));
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    remove(key) {
+      try {
+        localStorage.removeItem(key);
+      } catch {
+        /* storage unavailable: nothing to remove */
+      }
+    },
+  };
+
+  /** Creates an element. props are attributes (true → empty attribute) or on* listeners. */
+  function h(tag, props, ...children) {
+    const el = document.createElement(tag);
+    for (const [key, value] of Object.entries(props || {})) {
+      if (value === undefined || value === null || value === false) continue;
+      if (key.startsWith("on")) el.addEventListener(key.slice(2), value);
+      else el.setAttribute(key, value === true ? "" : String(value));
+    }
+    el.append(
+      ...children
+        .flat(Infinity)
+        .filter((c) => c !== null && c !== false && c !== undefined),
+    );
+    return el;
+  }
+
+  const $ = (id) => document.getElementById(id);
+
+  /* ---------- loading ---------- */
+
+  const roundSrc =
+    new URLSearchParams(location.search).get("round") || "round.js";
+  const roundUrl = new URL(roundSrc, location.href);
+  let defined = false;
+
+  function define(def) {
+    if (defined) {
+      showErrors([
+        { path: roundSrc, message: "RulingBoard.define が 2 回呼ばれた" },
+      ]);
+      return;
+    }
+    defined = true;
+    const errors = V.validate(def);
+    if (errors.length > 0) {
+      showErrors(errors);
+      return;
+    }
+    preload(def).then((failed) =>
+      failed.length > 0 ? showErrors(failed) : render(def),
+    );
+  }
+
+  globalThis.RulingBoard = Object.freeze({ VERSION, define });
+
+  const imageUrl = (path) => new URL(path, roundUrl).href;
+  const sizes = new Map();
+
+  function preload(def) {
+    const unique = new Map();
+    for (const entry of V.listImages(def)) {
+      if (!unique.has(entry.path)) unique.set(entry.path, entry);
+    }
+    const one = (entry) =>
+      new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          sizes.set(entry.path, [img.naturalWidth, img.naturalHeight]);
+          resolve(null);
+        };
+        img.onerror = () =>
+          resolve({ path: entry.at, message: `画像を読めない：${entry.path}` });
+        img.src = imageUrl(entry.path);
+      });
+    return Promise.all([...unique.values()].map(one)).then((r) =>
+      r.filter(Boolean),
+    );
+  }
+
+  function showErrors(errors) {
+    document.body.classList.add("is-broken");
+    $("main").removeAttribute("aria-busy");
+    document.title = `記述の誤り · ${NAME}`;
+    $("main").replaceChildren(
+      h(
+        "section",
+        { class: "errors", "aria-labelledby": "errors-title" },
+        h("h1", { id: "errors-title" }, "記述の誤り"),
+        h(
+          "ol",
+          { class: "error-list" },
+          errors.map((e) => h("li", {}, h("code", {}, e.path), " ", e.message)),
+        ),
+      ),
+    );
+  }
+
+  function start() {
+    if (/^[a-z][a-z0-9+.-]*:|^[\\/]/i.test(roundSrc)) {
+      showErrors([{ path: roundSrc, message: "相対パスではない" }]);
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = roundUrl.href;
+    script.onload = () => {
+      if (!defined)
+        showErrors([
+          { path: roundSrc, message: "RulingBoard.define が呼ばれていない" },
+        ]);
+    };
+    script.onerror = () =>
+      showErrors([{ path: roundSrc, message: "記述ファイルを読めない" }]);
+    document.body.append(script);
+  }
+
+  /* ---------- the board ---------- */
+
+  function render(def) {
+    const round = def.round;
+    const digest = V.digest(def);
+    const draftKey = `${NAME}:${round.id}`;
+    const viewLabel = new Map(def.views.map((v) => [v.id, v.label]));
+    const narrow = matchMedia("(max-width: 899.98px)");
+
+    let layout = store.get(PREFS)?.layout === "grid" ? "grid" : "switch";
+    let preferred = def.views[0].id;
+    let cleared = false;
+    let saveTimer = 0;
+    let announce = false;
+    const zoomState = { item: null, opener: null };
+    const visible = new Set();
+    const status = h("p", {
+      class: "sr-only",
+      "aria-live": "polite",
+      id: "status",
+    });
+
+    /* One flat list, in description order, is the source of every list on the page. */
+    const decisions = def.decisions.map((d) => ({ def: d, items: [] }));
+    const items = [];
+    for (const decision of decisions) {
+      for (const it of decision.def.items) {
+        const number = items.length + 1;
+        const views = V.viewsOf(def, it);
+        const item = {
+          def: it,
+          decision,
+          number,
+          views,
+          legend: `${number}. ${it.id} ${it.title}`,
+          recommended: it.options.findIndex((o) => o.recommended === true),
+          answer: { choice: null, hold: false, comment: "", seen: [] },
+          ui: {
+            option: 0,
+            view: views.includes(preferred) ? preferred : views[0],
+          },
+          el: {},
+        };
+        decision.items.push(item);
+        items.push(item);
+      }
+    }
+
+    const isDone = (item) => item.answer.hold || item.answer.choice !== null;
+    const choiceIndex = (item) =>
+      item.def.options.findIndex((o) => o.id === item.answer.choice);
+    const paths = (item, k, view = item.ui.view) =>
+      V.imagesOf(def, item.decision.def, item.def, item.def.options[k], view);
+
+    restoreDraft();
+
+    function restoreDraft() {
+      const draft = store.get(draftKey);
+      if (
+        !draft ||
+        draft.digest !== digest ||
+        !draft.items ||
+        typeof draft.items !== "object"
+      )
+        return;
+      for (const item of items) {
+        const saved = draft.items[item.def.id];
+        if (!saved) continue;
+        const a = item.answer;
+        if (item.def.options.some((o) => o.id === saved.choice))
+          a.choice = saved.choice;
+        a.hold = saved.hold === true && a.choice === null;
+        if (typeof saved.comment === "string") a.comment = saved.comment;
+        if (Array.isArray(saved.seen))
+          a.seen = item.views.filter((v) => saved.seen.includes(v));
+        const k = choiceIndex(item);
+        if (k >= 0) item.ui.option = k;
+      }
+    }
+
+    function save() {
+      clearTimeout(saveTimer);
+      saveTimer = 0;
+      if (cleared) return;
+      const answers = Object.fromEntries(
+        items.map((i) => [i.def.id, i.answer]),
+      );
+      if (store.set(draftKey, { digest, items: answers }) && announce) {
+        status.textContent = "下書きを保存";
+      }
+      announce = false;
+    }
+    const scheduleSave = () => {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(save, 400);
+    };
+    addEventListener("pagehide", () => saveTimer && save());
+
+    /* ----- shared pieces ----- */
+
+    const optionText = (option, k) => [
+      h("span", { class: "opt-num" }, numbered(k + 1)),
+      " ",
+      option.label,
+      option.recommended ? h("span", { class: "badge rec" }, "推奨") : null,
+      (option.tags || []).map((t) => h("span", { class: "badge tag" }, t)),
+    ];
+
+    function segments(item, k, view = item.ui.view) {
+      const option = item.def.options[k];
+      const list = paths(item, k, view);
+      if (list.length === 0)
+        return [h("span", { class: "no-image" }, "画像なし")];
+      const rect = item.def.focus && item.def.focus[view];
+      return list.map((path, n) => {
+        const [w, hgt] = sizes.get(path) || [0, 0];
+        const suffix = list.length > 1 ? ` · ${n + 1}/${list.length}` : "";
+        const img = h("img", {
+          src: imageUrl(path),
+          alt: `${item.def.title} · ${option.label} · ${viewLabel.get(view)}${suffix}`,
+          width: w || null,
+          height: hgt || null,
+          decoding: "async",
+        });
+        const seg = h("span", { class: "seg" }, img);
+        if (n === 0 && rect && w && hgt) {
+          seg.append(
+            h("span", {
+              class: "focus-box",
+              "aria-hidden": "true",
+              style: `left:${(rect[0] * 100) / w}%;top:${(rect[1] * 100) / hgt}%;width:${(rect[2] * 100) / w}%;height:${(rect[3] * 100) / hgt}%`,
+            }),
+          );
+        }
+        return seg;
+      });
+    }
+
+    /** Swaps the content of a scroll box without moving its scroll position. */
+    function keepScroll(box, swap) {
+      const top = box.scrollTop;
+      const left = box.scrollLeft;
+      swap();
+      box.scrollTop = top;
+      box.scrollLeft = left;
+    }
+
+    const optionKey = (e, count, current) => {
+      if (e.altKey || e.ctrlKey || e.metaKey) return null;
+      if (e.key === "ArrowRight") return (current + 1) % count;
+      if (e.key === "ArrowLeft") return (current - 1 + count) % count;
+      if (/^[1-9]$/.test(e.key) && Number(e.key) <= count)
+        return Number(e.key) - 1;
+      return null;
+    };
+
+    function pressed(group, value) {
+      for (const b of group.querySelectorAll("button[data-value]")) {
+        b.setAttribute(
+          "aria-pressed",
+          String(b.dataset.value === String(value)),
+        );
+      }
+    }
+
+    /* ----- header ----- */
+
+    const progress = h("span", { class: "progress-count" });
+    const tocCount = h("span", { class: "toc-open-count" });
+    const tocOpen = h(
+      "button",
+      {
+        type: "button",
+        class: "toc-open",
+        "aria-haspopup": "dialog",
+        onclick: openDrawer,
+      },
+      "目次 ",
+      tocCount,
+    );
+    const viewGroup = h(
+      "div",
+      { class: "seg-group", role: "group", "aria-label": "見え方" },
+      def.views.map((v) =>
+        h(
+          "button",
+          {
+            type: "button",
+            "data-value": v.id,
+            onclick: () => setPreferred(v.id),
+          },
+          v.label,
+        ),
+      ),
+    );
+    const layoutGroup = h(
+      "div",
+      { class: "seg-group", role: "group", "aria-label": "表示" },
+      h(
+        "button",
+        {
+          type: "button",
+          "data-value": "switch",
+          onclick: () => setLayout("switch"),
+        },
+        "切り替え",
+      ),
+      h(
+        "button",
+        {
+          type: "button",
+          "data-value": "grid",
+          onclick: () => setLayout("grid"),
+        },
+        "並べる",
+      ),
+    );
+    $("top").replaceChildren(
+      tocOpen,
+      h("h1", { class: "round-title" }, round.title),
+      h("p", { class: "progress", "aria-live": "polite" }, "進み ", progress),
+      viewGroup,
+      layoutGroup,
+    );
+    pressed(viewGroup, preferred);
+    pressed(layoutGroup, layout);
+
+    /* ----- table of contents ----- */
+
+    const tocList = h("ol", { class: "toc" });
+    const nav = h(
+      "nav",
+      { id: "toc", "aria-label": "目次" },
+      tocList,
+      h("p", { class: "toc-answer" }, h("a", { href: "#answer" }, "回答案")),
+    );
+
+    /* ----- body ----- */
+
+    const body = [];
+    for (const decision of decisions) {
+      const d = decision.def;
+      decision.count = h("span", { class: "toc-count" });
+      const sub = h("ol", { class: "toc-items" });
+      tocList.append(
+        h(
+          "li",
+          { class: "toc-decision", "data-decision": d.id },
+          h(
+            "a",
+            { href: `#dec-${d.id}`, class: "toc-decision-link" },
+            `${d.id} ${d.title}`,
+            " ",
+            decision.count,
+          ),
+          sub,
+        ),
+      );
+      const section = h(
+        "section",
+        {
+          class: "decision",
+          id: `dec-${d.id}`,
+          "data-decision": d.id,
+          "aria-labelledby": `dh-${d.id}`,
+        },
+        h("h2", { id: `dh-${d.id}`, tabindex: "-1" }, `${d.id} ${d.title}`),
+      );
+      for (const item of decision.items) {
+        item.el.toc = h("a", {
+          class: "toc-item",
+          href: `#item-${item.def.id}`,
+          "data-item": item.def.id,
+        });
+        sub.append(h("li", {}, item.el.toc));
+        section.append(itemSection(item));
+      }
+      body.push(section);
+    }
+
+    const answerBox = h("textarea", {
+      id: "answer-text",
+      class: "answer-text",
+      readonly: true,
+      rows: "16",
+      spellcheck: "false",
+      "aria-labelledby": "answer-title",
+    });
+    body.push(
+      h(
+        "section",
+        { class: "answer", id: "answer", "aria-labelledby": "answer-title" },
+        h("h2", { id: "answer-title", tabindex: "-1" }, "回答案"),
+        answerBox,
+        h(
+          "div",
+          { class: "actions" },
+          h("button", { type: "button", onclick: copyAnswer }, "コピー"),
+          h("button", { type: "button", onclick: saveAnswer }, "保存"),
+          h(
+            "button",
+            { type: "button", class: "quiet", onclick: clearDraft },
+            "下書きを消す",
+          ),
+        ),
+        status,
+      ),
+    );
+
+    $("side").replaceChildren(nav);
+    $("main").replaceChildren(...body);
+    document.title = `${round.title} · ${NAME}`;
+    document.body.classList.toggle("layout-grid", layout === "grid");
+
+    function itemSection(item) {
+      const it = item.def;
+      const el = item.el;
+
+      el.options = h(
+        "div",
+        { class: "seg-group options", role: "group", "aria-label": "案" },
+        it.options.map((o, k) =>
+          h(
+            "button",
+            {
+              type: "button",
+              "data-value": k,
+              onclick: () => showOption(item, k),
+            },
+            optionText(o, k),
+          ),
+        ),
+      );
+      el.views =
+        item.views.length > 1
+          ? h(
+              "div",
+              {
+                class: "seg-group views",
+                role: "group",
+                "aria-label": "見え方",
+              },
+              item.views.map((v) =>
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    "data-value": v,
+                    onclick: () => showView(item, v),
+                  },
+                  viewLabel.get(v),
+                ),
+              ),
+            )
+          : null;
+      el.stage = h("div", {
+        class: "stage",
+        tabindex: "0",
+        role: "group",
+        "aria-label": `${item.legend} · 比較`,
+        onkeydown: (e) => {
+          const k = optionKey(e, it.options.length, item.ui.option);
+          if (k === null) return;
+          e.preventDefault();
+          showOption(item, k);
+        },
+      });
+      el.zoom = h("button", {
+        type: "button",
+        class: "zoom",
+        onclick: (e) => openZoom(item, e.currentTarget),
+      });
+
+      const name = `pick-${it.id}`;
+      const radio = (value, label, onchange) =>
+        h(
+          "label",
+          { class: "choice" },
+          h("input", { type: "radio", name, value, onchange }),
+          h("span", {}, label),
+        );
+      el.comment = h("textarea", {
+        class: "comment",
+        rows: "2",
+        "aria-label": `${item.legend} · コメント`,
+        oninput: (e) => {
+          item.answer.comment = e.target.value;
+          changed(item, true);
+        },
+      });
+      el.comment.value = item.answer.comment;
+
+      el.fieldset = h(
+        "fieldset",
+        { class: "choose", "data-item": it.id },
+        h("legend", {}, item.legend),
+        h(
+          "div",
+          { class: "choices" },
+          it.options.map((o, k) =>
+            radio(`option:${o.id}`, optionText(o, k), () => {
+              item.answer.choice = o.id;
+              item.answer.hold = false;
+              showOption(item, k);
+              changed(item, true);
+            }),
+          ),
+          radio("hold", "保留", () => {
+            item.answer.choice = null;
+            item.answer.hold = true;
+            changed(item, true);
+          }),
+        ),
+        h(
+          "label",
+          { class: "comment-label" },
+          h("span", { "aria-hidden": "true" }, "コメント"),
+          el.comment,
+        ),
+      );
+      const checked = item.answer.hold
+        ? "hold"
+        : item.answer.choice
+          ? `option:${item.answer.choice}`
+          : null;
+      for (const input of el.fieldset.querySelectorAll("input[type=radio]")) {
+        input.checked = input.value === checked;
+      }
+
+      el.section = h(
+        "section",
+        {
+          class: "item",
+          id: `item-${it.id}`,
+          "data-item": it.id,
+          "aria-labelledby": `ih-${it.id}`,
+        },
+        h(
+          "h3",
+          { id: `ih-${it.id}`, tabindex: "-1" },
+          h("span", { class: "num" }, item.number),
+          " ",
+          `${it.id} ${it.title}`,
+        ),
+        h("p", { class: "question" }, it.question),
+        h("div", { class: "bar" }, el.options, el.views),
+        el.stage,
+        el.fieldset,
+      );
+      drawStage(item);
+      return el.section;
+    }
+
+    /* ----- comparing ----- */
+
+    function drawStage(item) {
+      const { stage, zoom } = item.el;
+      pressed(item.el.options, item.ui.option);
+      if (item.el.views) pressed(item.el.views, item.ui.view);
+      keepScroll(stage, () => {
+        if (layout === "grid") {
+          stage.replaceChildren(
+            ...item.def.options.map((o, k) =>
+              h(
+                "figure",
+                {
+                  class: k === item.ui.option ? "col is-current" : "col",
+                  "data-option": o.id,
+                },
+                h("figcaption", {}, optionText(o, k)),
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    class: "zoom",
+                    onclick: (e) => openZoom(item, e.currentTarget, k),
+                  },
+                  segments(item, k),
+                ),
+              ),
+            ),
+          );
+        } else {
+          zoom.dataset.option = item.def.options[item.ui.option].id;
+          zoom.replaceChildren(...segments(item, item.ui.option));
+          if (zoom.parentNode !== stage) stage.replaceChildren(zoom);
+        }
+      });
+    }
+
+    function showOption(item, k) {
+      item.ui.option = k;
+      if (layout === "grid") {
+        pressed(item.el.options, k);
+        item.el.stage
+          .querySelectorAll(".col")
+          .forEach((col, n) => col.classList.toggle("is-current", n === k));
+        if (item.el.stage.contains(document.activeElement)) {
+          item.el.stage.querySelectorAll(".col .zoom")[k].focus();
+        }
+      } else {
+        drawStage(item);
+      }
+      if (zoomState.item === item) drawZoom();
+    }
+
+    function showView(item, view) {
+      item.ui.view = view;
+      drawStage(item);
+      if (visible.has(item)) markSeen(item);
+    }
+
+    function setPreferred(view) {
+      preferred = view;
+      pressed(viewGroup, view);
+      for (const item of items)
+        showView(item, item.views.includes(view) ? view : item.views[0]);
+    }
+
+    function setLayout(next) {
+      layout = next;
+      pressed(layoutGroup, layout);
+      document.body.classList.toggle("layout-grid", layout === "grid");
+      store.set(PREFS, { layout });
+      for (const item of items) drawStage(item);
+    }
+
+    /* ----- zoom ----- */
+
+    const zoomDialog = /** @type {HTMLDialogElement} */ ($("zoom"));
+    const zoomTitle = h("h2", { id: "zoom-title", class: "zoom-title" });
+    const zoomOptions = h("div", {
+      class: "seg-group options",
+      role: "group",
+      "aria-label": "案",
+    });
+    const zoomBody = h("div", { class: "zoom-body", tabindex: "-1" });
+    zoomDialog.setAttribute("aria-labelledby", "zoom-title");
+    zoomDialog.replaceChildren(
+      h(
+        "div",
+        { class: "zoom-head" },
+        zoomTitle,
+        zoomOptions,
+        h(
+          "button",
+          { type: "button", class: "close", onclick: () => zoomDialog.close() },
+          "閉じる",
+        ),
+      ),
+      zoomBody,
+    );
+    zoomDialog.addEventListener("keydown", (e) => {
+      const item = zoomState.item;
+      if (!item) return;
+      const k = optionKey(e, item.def.options.length, item.ui.option);
+      if (k === null) return;
+      e.preventDefault();
+      showOption(item, k);
+    });
+    zoomDialog.addEventListener("close", () => {
+      const opener = zoomState.opener;
+      zoomState.item = null;
+      zoomState.opener = null;
+      if (opener && opener.isConnected) opener.focus();
+    });
+
+    function openZoom(item, opener, k = item.ui.option) {
+      zoomState.item = item;
+      zoomState.opener = opener;
+      if (k !== item.ui.option) showOption(item, k);
+      zoomTitle.textContent = `${item.legend} · ${viewLabel.get(item.ui.view)}`;
+      zoomOptions.replaceChildren(
+        ...item.def.options.map((o, n) =>
+          h(
+            "button",
+            {
+              type: "button",
+              "data-value": n,
+              onclick: () => showOption(item, n),
+            },
+            optionText(o, n),
+          ),
+        ),
+      );
+      zoomBody.replaceChildren();
+      drawZoom();
+      zoomDialog.showModal();
+      zoomBody.scrollTop = 0;
+      zoomBody.focus();
+      markSeen(item);
+    }
+
+    function drawZoom() {
+      const item = zoomState.item;
+      pressed(zoomOptions, item.ui.option);
+      keepScroll(zoomBody, () => {
+        zoomBody.dataset.option = item.def.options[item.ui.option].id;
+        zoomBody.replaceChildren(...segments(item, item.ui.option));
+      });
+    }
+
+    /* ----- drawer (narrow screens) ----- */
+
+    const drawer = /** @type {HTMLDialogElement} */ ($("toc-drawer"));
+    function openDrawer() {
+      drawer.append(nav);
+      drawer.showModal();
+    }
+    drawer.addEventListener("close", () => $("side").append(nav));
+    narrow.addEventListener("change", () => {
+      if (!narrow.matches && drawer.open) drawer.close();
+    });
+
+    nav.addEventListener("click", (e) => {
+      const link = e.target.closest("a[href^='#']");
+      if (!link) return;
+      const target = $(decodeURIComponent(link.hash.slice(1)));
+      if (!target) return;
+      e.preventDefault();
+      if (drawer.open) drawer.close();
+      target.scrollIntoView({ block: "start" });
+      const heading = /** @type {HTMLElement} */ (
+        target.querySelector("h2, h3")
+      );
+      heading.focus({ preventScroll: true });
+      history.replaceState(null, "", link.hash);
+    });
+
+    /* ----- what is on screen ----- */
+
+    const byStage = new Map(items.map((i) => [i.el.stage, i]));
+    const stageWatch = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const item = byStage.get(entry.target);
+          if (entry.isIntersecting && entry.intersectionRatio >= SEEN_RATIO) {
+            visible.add(item);
+            markSeen(item);
+          } else {
+            visible.delete(item);
+          }
+        }
+      },
+      { threshold: SEEN_RATIO },
+    );
+    byStage.forEach((_, stage) => stageWatch.observe(stage));
+
+    function markSeen(item) {
+      const seen = item.answer.seen;
+      if (seen.includes(item.ui.view)) return;
+      seen.push(item.ui.view);
+      item.answer.seen = item.views.filter((v) => seen.includes(v));
+      changed(item, false);
+    }
+
+    const bySection = new Map(items.map((i) => [i.el.section, i]));
+    const here = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          for (const i of items) i.el.toc.removeAttribute("aria-current");
+          bySection
+            .get(entry.target)
+            .el.toc.setAttribute("aria-current", "location");
+        }
+      },
+      { rootMargin: "-30% 0px -60% 0px" },
+    );
+    bySection.forEach((_, section) => here.observe(section));
+
+    const top = $("top");
+    new ResizeObserver(() => {
+      document.documentElement.style.setProperty(
+        "--top-h",
+        `${top.offsetHeight}px`,
+      );
+    }).observe(top);
+
+    /* ----- state → page ----- */
+
+    function drawToc(item) {
+      const a = item.answer;
+      const k = choiceIndex(item);
+      const state = a.hold ? "hold" : k >= 0 ? "chosen" : "none";
+      const spoken = {
+        none: "未選択",
+        chosen: `選択済 ${k >= 0 ? item.def.options[k].label : ""}`,
+        hold: "保留",
+      }[state];
+      item.el.toc.dataset.state = state;
+      item.el.toc.replaceChildren(
+        h("span", { class: "mark", "aria-hidden": "true" }, MARK[state]),
+        h("span", { class: "sr-only" }, spoken),
+        h("span", { class: "num" }, item.number),
+        h("span", { class: "name" }, `${item.def.id} ${item.def.title}`),
+        state === "chosen"
+          ? h("span", { class: "pick", "aria-hidden": "true" }, numbered(k + 1))
+          : null,
+        state === "hold"
+          ? h("span", { class: "pick", "aria-hidden": "true" }, "保留")
+          : null,
+        a.comment.trim()
+          ? h(
+              "span",
+              { class: "has-comment" },
+              h("span", { class: "sr-only" }, "コメントあり"),
+            )
+          : null,
+      );
+    }
+
+    function drawCounts() {
+      for (const decision of decisions) {
+        decision.count.textContent = `${decision.items.filter(isDone).length}/${decision.items.length}`;
+      }
+      const text = `${items.filter(isDone).length}/${items.length}`;
+      progress.textContent = text;
+      tocCount.textContent = text;
+    }
+
+    function answerText() {
+      const done = items.filter(isDone).length;
+      const held = items.filter((i) => i.answer.hold).length;
+      const lines = [`# 回答：${round.title}（${round.id}）`];
+      if (round.answerTo) lines.push(`回答先: ${round.answerTo}`);
+      lines.push(
+        [
+          round.source && `比較元: ${round.source}`,
+          `記述: ${digest}`,
+          `器: ${NAME} ${VERSION}`,
+        ]
+          .filter(Boolean)
+          .join(" / "),
+      );
+      lines.push(
+        `回答日: ${today()} · 選択 ${done}/${items.length}（保留 ${held}）`,
+      );
+      for (const decision of decisions) {
+        lines.push("", `## ${decision.def.id} ${decision.def.title}`);
+        if (decision.def.note) lines.push(`注記: ${decision.def.note}`);
+        for (const item of decision.items) {
+          const a = item.answer;
+          const k = choiceIndex(item);
+          const pick = a.hold
+            ? "保留"
+            : k >= 0
+              ? `${numbered(k + 1)} ${item.def.options[k].label}`
+              : "未選択";
+          const rec =
+            item.recommended >= 0
+              ? `（推奨 ${numbered(item.recommended + 1)}）`
+              : "";
+          const seen = a.seen.length > 0 ? a.seen.join(", ") : "なし";
+          lines.push(
+            `- ${item.def.id} ${item.def.title}: ${pick}${rec} · 見た: ${seen}`,
+          );
+          const comment = a.comment.trim();
+          if (comment)
+            lines.push(
+              `  - コメント: ${comment.split(/\r?\n/).join("\n    ")}`,
+            );
+        }
+      }
+      return `${lines.join("\n")}\n`;
+    }
+
+    function today() {
+      const d = new Date();
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
+
+    function changed(item, byHand) {
+      drawToc(item);
+      drawCounts();
+      answerBox.value = answerText();
+      announce ||= byHand;
+      scheduleSave();
+    }
+
+    /* ----- answer ----- */
+
+    async function copyAnswer() {
+      try {
+        await navigator.clipboard.writeText(answerBox.value);
+      } catch {
+        answerBox.focus();
+        answerBox.select();
+        if (!document.execCommand("copy")) {
+          status.textContent = "コピーできない";
+          return;
+        }
+      }
+      status.textContent = "コピーした";
+    }
+
+    function saveAnswer() {
+      const url = URL.createObjectURL(
+        new Blob([answerBox.value], { type: "text/markdown;charset=utf-8" }),
+      );
+      const link = h("a", {
+        href: url,
+        download: `${round.id}-answer.md`,
+        hidden: true,
+      });
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function clearDraft() {
+      if (!confirm("下書きを消す")) return;
+      cleared = true;
+      clearTimeout(saveTimer);
+      store.remove(draftKey);
+      location.reload();
+    }
+
+    for (const item of items) drawToc(item);
+    drawCounts();
+    answerBox.value = answerText();
+    $("main").removeAttribute("aria-busy");
+    document.body.classList.add("is-ready");
+  }
+
+  start();
+})();
