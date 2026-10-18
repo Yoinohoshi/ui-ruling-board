@@ -58,6 +58,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
   color: inherit;
@@ -134,6 +135,7 @@ textarea {
 
 .seg-group button,
 .actions button,
+.view-pick,
 .toc-open,
 .close {
   min-height: 2.25rem;
@@ -148,6 +150,10 @@ textarea {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-ink);
+}
+
+.view-pick {
+  max-width: min(14rem, 100%);
 }
 
 .toc-open {
@@ -304,6 +310,14 @@ main:focus {
   }
   .toc-open {
     display: inline-block;
+  }
+  /* A long title takes at most two lines, so the header stays small on a phone. */
+  .round-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
   }
   main {
     padding: 1rem 1rem 4rem;

@@ -23,7 +23,15 @@
     view: ["id", "label"],
     decision: ["id", "title", "note", "items"],
     item: ["id", "title", "question", "views", "focus", "options"],
-    option: ["id", "label", "recommended", "tags", "images", "noImage"],
+    option: [
+      "id",
+      "label",
+      "recommended",
+      "tags",
+      "images",
+      "noImage",
+      "focus",
+    ],
   };
 
   const isObject = (v) =>
@@ -146,17 +154,20 @@
         if (!views.includes(view)) fail(p, `この項目に無い見え方「${view}」`);
       };
 
-      if (item.focus !== undefined) {
-        if (!isObject(item.focus)) {
-          fail(`${path}.focus`, "オブジェクトではない");
-        } else {
-          for (const [view, rect] of Object.entries(item.focus)) {
-            inViews(view, `${path}.focus.${view}`);
-            if (!isRect(rect))
-              fail(`${path}.focus.${view}`, "[x, y, 幅, 高さ] ではない");
-          }
+      /** The changed area per view, on the item (every option) or on one option (over the item's). */
+      const focus = (owner, p) => {
+        if (owner.focus === undefined) return;
+        if (!isObject(owner.focus)) {
+          fail(`${p}.focus`, "オブジェクトではない");
+          return;
         }
-      }
+        for (const [view, rect] of Object.entries(owner.focus)) {
+          inViews(view, `${p}.focus.${view}`);
+          if (!isRect(rect))
+            fail(`${p}.focus.${view}`, "[x, y, 幅, 高さ] ではない");
+        }
+      };
+      focus(item, path);
 
       const optionIds = new Set();
       let recommended = 0;
@@ -182,6 +193,9 @@
         if (option.noImage !== undefined && option.noImage !== true) {
           fail(`${op}.noImage`, "true だけを書ける");
         }
+        if (option.noImage === true && option.focus !== undefined)
+          fail(`${op}.focus`, "noImage と同時に書けない");
+        focus(option, op);
         if (option.images !== undefined) {
           if (option.noImage === true)
             fail(`${op}.images`, "noImage と同時に書けない");

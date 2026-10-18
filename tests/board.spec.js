@@ -26,6 +26,10 @@ const radio = (page, id, value) =>
   page.locator(`fieldset.choose[data-item="${id}"] input[value="${value}"]`);
 const optionButton = (scope, k) =>
   scope.locator(`.options button[data-value="${k}"]`);
+const viewPick = (page) => page.locator('.top select[aria-label="見え方"]');
+/** Chooses a view in the header by its label (「項目ごと」 hands every item back its own first view). */
+const pickView = (page, label) => viewPick(page).selectOption({ label });
+const shownAlt = (page, id) => item(page, id).locator(".stage img").first();
 const answerLines = (page) =>
   page
     .locator("#answer-text")
@@ -122,6 +126,7 @@ test.describe("S3: どの見え方を選んでも各項目の画像に届く", (
     }) => {
       const def = readRound();
       const labels = new Map(def.views.map((v) => [v.id, v.label]));
+      /** preferred = null: nothing chosen in the header, so each item shows its own first view. */
       const everyItemShows = async (preferred) => {
         for (const it of def.decisions.flatMap((d) => d.items)) {
           const views = it.views || def.views.map((v) => v.id);
@@ -146,19 +151,18 @@ test.describe("S3: どの見え方を選んでも各項目の画像に届く", (
       };
 
       await openBoard(page);
-      // As opened, before any header button is pressed: the preference is the first view.
-      await everyItemShows(def.views[0].id);
+      // As opened, before anything is chosen in the header: each item's own first view.
+      await expect(viewPick(page)).toHaveValue("");
+      await everyItemShows(null);
       await page
         .locator('.top [aria-label="表示"] button', { hasText: layout })
         .click();
       for (const view of def.views) {
-        await page
-          .locator('.top [aria-label="見え方"] button', {
-            hasText: new RegExp(`^${view.label}$`),
-          })
-          .click();
+        await pickView(page, view.label);
         await everyItemShows(view.id);
       }
+      await pickView(page, "項目ごと");
+      await everyItemShows(null);
     });
   }
 
@@ -239,6 +243,144 @@ test.describe("S3: どの見え方を選んでも各項目の画像に届く", (
   });
 });
 
+test.describe("見え方の初期値：各項目は記述の項目の views の先頭で開く", () => {
+  /** D1.1 and D2.2 list a view first that is not the round's first. */
+  const reordered = (testInfo) => {
+    const def = readRound();
+    def.decisions[0].items[0].views = ["390", "1280"];
+    def.decisions[1].items[1].views = ["390-menu", "1280"];
+    return boardUrl(writeRound(testInfo, def));
+  };
+  const shows = async (page, expected) => {
+    for (const [id, alt] of Object.entries(expected)) {
+      await expect(shownAlt(page, id), id).toHaveAttribute("alt", alt);
+    }
+  };
+
+  test("開いた直後は項目の先頭。頭で選ぶと持つ項目だけが替わり、「項目ごと」で先頭へ戻る", async ({
+    page,
+  }, testInfo) => {
+    await openBoard(page, reordered(testInfo));
+    await expect(viewPick(page)).toHaveValue("");
+    const own = {
+      "D1.1": "詳細の置き場 · 現状 · 390",
+      "D1.2": "保存の釦 · 現状 · 1280",
+      "D2.2": "メニューの項目の並び · 現状 · 390 · メニュー",
+    };
+    await shows(page, own);
+    await expect(
+      item(page, "D1.1").getByRole("button", { name: "390", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    // What is seen first is the item's own first view too.
+    await item(page, "D1.1").locator(".stage").scrollIntoViewIfNeeded();
+    await expect
+      .poll(async () =>
+        (await answerLines(page)).find((l) => l.startsWith("- D1.1 ")),
+      )
+      .toBe("- D1.1 詳細の置き場: 未選択（推奨 ②） · 見た: 390");
+
+    await pickView(page, "1280");
+    await shows(page, {
+      "D1.1": "詳細の置き場 · 現状 · 1280",
+      "D1.2": "保存の釦 · 現状 · 1280",
+      "D2.2": "メニューの項目の並び · 現状 · 1280",
+    });
+
+    // D2.2 has no 390: it shows its own first view, not the round's first.
+    await pickView(page, "390");
+    await shows(page, {
+      "D1.1": "詳細の置き場 · 現状 · 390",
+      "D1.2": "保存の釦 · 現状 · 390",
+      "D2.2": "メニューの項目の並び · 現状 · 390 · メニュー",
+    });
+
+    await pickView(page, "1280");
+    await pickView(page, "項目ごと");
+    await shows(page, own);
+  });
+});
+
+test.describe("頭の帯：見え方の多い回でも画面を覆わない", () => {
+  const COUNT = 68;
+  const WIDTHS = [1440, 1280, 1024, 768, 600, 390, 360];
+  /** The example with 68 views; D1.2 has every one of them (its extra views reuse its 1280 images). */
+  const manyViews = (testInfo) => {
+    const def = readRound();
+    const extra = [];
+    for (let n = def.views.length; n < COUNT; n += 1) {
+      const width = WIDTHS[n % WIDTHS.length];
+      extra.push({ id: `${width}-s${n}`, label: `${width} · 状態 ${n}` });
+    }
+    def.views.push(...extra);
+    for (const option of def.decisions[0].items[1].options) {
+      option.images = Object.fromEntries(
+        extra.map((v) => [v.id, `images/D1.2/${option.id}-1280.svg`]),
+      );
+    }
+    return boardUrl(writeRound(testInfo, def));
+  };
+  const headerHeight = (page) =>
+    page.locator("#top").evaluate((el) => el.getBoundingClientRect().height);
+
+  test.describe("390px", () => {
+    test.use({ viewport: { width: 390, height: 844 } });
+
+    test("頭の帯の高さは画面の 1/4 以下で、頭から全部の見え方を選べる", async ({
+      page,
+    }, testInfo) => {
+      await openBoard(page, manyViews(testInfo));
+      await expect(viewPick(page).locator("option")).toHaveCount(COUNT + 1);
+      expect(await headerHeight(page)).toBeLessThanOrEqual(844 / 4);
+
+      await pickView(page, "768 · 状態 10");
+      await expect(shownAlt(page, "D1.2")).toHaveAttribute(
+        "alt",
+        "保存の釦 · 現状 · 768 · 状態 10",
+      );
+      await expect(shownAlt(page, "D1.1")).toHaveAttribute(
+        "alt",
+        "詳細の置き場 · 現状 · 1280",
+      );
+      expect(await headerHeight(page)).toBeLessThanOrEqual(844 / 4);
+      const overflow = await page.evaluate(
+        () =>
+          document.documentElement.scrollWidth -
+          document.documentElement.clientWidth,
+      );
+      expect(overflow).toBeLessThanOrEqual(0);
+    });
+  });
+
+  test.describe("1440px", () => {
+    test.use({ viewport: { width: 1440, height: 900 } });
+
+    test("頭の帯は 1 行に収まり、見え方が 3 つの例より高くならない", async ({
+      page,
+    }, testInfo) => {
+      await openBoard(page);
+      const few = await headerHeight(page);
+      await openBoard(page, manyViews(testInfo));
+      expect(await headerHeight(page)).toBeLessThanOrEqual(few);
+      const boxes = await page
+        .locator("#top > *")
+        .evaluateAll((els) =>
+          els
+            .map((e) => e.getBoundingClientRect().toJSON())
+            .filter((b) => b.width > 0),
+        );
+      const title = await page
+        .locator("#top .round-title")
+        .evaluate((el) => el.getBoundingClientRect().toJSON());
+      expect(boxes.length).toBe(4);
+      for (const b of boxes) {
+        expect(b.top, JSON.stringify(b)).toBeLessThan(title.bottom);
+        expect(b.bottom, JSON.stringify(b)).toBeGreaterThan(title.top);
+      }
+    });
+  });
+});
+
 test("外部への通信が 0 件", async ({ page }) => {
   const external = [];
   page.on("request", (r) => {
@@ -246,11 +388,7 @@ test("外部への通信が 0 件", async ({ page }) => {
   });
   await openBoard(page);
   for (const label of ["390", "390 · メニュー", "1280"]) {
-    await page
-      .locator('.top [aria-label="見え方"] button', {
-        hasText: new RegExp(`^${label}$`),
-      })
-      .click();
+    await pickView(page, label);
   }
   await page
     .locator('.top [aria-label="表示"] button', { hasText: "並べる" })
@@ -316,11 +454,7 @@ test.describe("390px", () => {
         .locator('.top [aria-label="表示"] button', { hasText: layout })
         .click();
       for (const label of ["1280", "390", "390 · メニュー"]) {
-        await page
-          .locator('.top [aria-label="見え方"] button', {
-            hasText: new RegExp(`^${label}$`),
-          })
-          .click();
+        await pickView(page, label);
         const overflow = await page.evaluate(
           () =>
             document.documentElement.scrollWidth -
@@ -554,6 +688,49 @@ test.describe("切り替え", () => {
       .click();
     await expect(box).toHaveCount(0);
   });
+
+  test("案ごとの変わる範囲：表示中の案の範囲を描き、案に無ければ項目の範囲（切り替え・並べる・拡大）", async ({
+    page,
+  }) => {
+    const ITEM = /left:30\.625%;top:8%;width:68\.75%;height:91%/;
+    const OPTION_B = /left:1\.875%;top:49%;width:96\.25%;height:49%/;
+    await openBoard(page);
+    const it = item(page, "D1.1");
+    const box = it.locator(".stage .focus-box");
+
+    await optionButton(it, 2).click();
+    await expect(box).toHaveCount(1);
+    await expect(box).toHaveAttribute("style", OPTION_B);
+    await optionButton(it, 1).click();
+    await expect(box).toHaveAttribute("style", ITEM);
+    await optionButton(it, 2).click();
+    await expect(box).toHaveAttribute("style", OPTION_B);
+
+    // Neither the option nor the item has an area at 390.
+    await it.getByRole("button", { name: "390", exact: true }).click();
+    await expect(box).toHaveCount(0);
+    await it.getByRole("button", { name: "1280", exact: true }).click();
+
+    await it.locator(".stage .zoom").click();
+    const zoomBox = page.locator("#zoom .zoom-body .focus-box");
+    await expect(zoomBox).toHaveCount(1);
+    await expect(zoomBox).toHaveAttribute("style", OPTION_B);
+    await page.keyboard.press("1");
+    await expect(zoomBox).toHaveAttribute("style", ITEM);
+    await page.keyboard.press("Escape");
+
+    await page
+      .locator('.top [aria-label="表示"] button', { hasText: "並べる" })
+      .click();
+    const cols = it.locator(".stage figure.col");
+    await expect(cols).toHaveCount(3);
+    for (const [k, style] of [ITEM, ITEM, OPTION_B].entries()) {
+      await expect(cols.nth(k).locator(".focus-box")).toHaveAttribute(
+        "style",
+        style,
+      );
+    }
+  });
 });
 
 test("拡大：中でも案を替え、送り位置を保ち、Esc で押した画像へ焦点が戻る", async ({
@@ -658,7 +835,7 @@ test("回答案の中身と保存", async ({ page }) => {
   expect(lines.slice(0, 4)).toEqual([
     "# 回答：設定画面の配置（basic-r1）",
     "回答先: https://example.com/rounds/basic-r1",
-    `比較元: example · v1 / 記述: ${digest(def)} / 器: ui-ruling-board 0.1.0`,
+    `比較元: example · v1 / 記述: ${digest(def)} / 器: ui-ruling-board 0.2.0`,
     expect.stringMatching(/^回答日: \d{4}-\d{2}-\d{2} · 選択 2\/5（保留 1）$/),
   ]);
   expect(lines).toContain("## D2 メニュー");
@@ -788,6 +965,29 @@ test.describe("記述の欠けでは本文を描かず、誤りの一覧を出�
       "案が 1 つ",
       (d) => d.decisions[0].items[2].options.pop(),
       "decisions[0].items[2].options 2 つ以上が必須",
+    ],
+    [
+      "案の変わる範囲に、項目に無い見え方",
+      (d) =>
+        (d.decisions[0].items[0].options[1].focus = {
+          "390-menu": [0, 0, 1, 1],
+        }),
+      "decisions[0].items[0].options[1].focus.390-menu この項目に無い見え方「390-menu」",
+    ],
+    [
+      "案の変わる範囲の形",
+      (d) =>
+        (d.decisions[0].items[0].options[1].focus = { 1280: [0, 0, 0, 1] }),
+      "decisions[0].items[0].options[1].focus.1280 [x, y, 幅, 高さ] ではない",
+    ],
+    [
+      "画像の無い案の変わる範囲",
+      (d) =>
+        Object.assign(d.decisions[0].items[2].options[0], {
+          noImage: true,
+          focus: { 1280: [0, 0, 1, 1] },
+        }),
+      "decisions[0].items[2].options[0].focus noImage と同時に書けない",
     ],
     [
       "画像のファイルが無い",

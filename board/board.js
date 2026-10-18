@@ -8,7 +8,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.1.0";
+  const VERSION = "0.2.0";
   const NAME = "ui-ruling-board";
   const PREFS = `${NAME}:prefs`;
   const CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
@@ -160,7 +160,6 @@
     const narrow = matchMedia("(max-width: 899.98px)");
 
     let layout = store.get(PREFS)?.layout === "grid" ? "grid" : "switch";
-    let preferred = def.views[0].id;
     let cleared = false;
     let saveTimer = 0;
     let announce = false;
@@ -187,10 +186,8 @@
           legend: `${number}. ${it.id} ${it.title}`,
           recommended: it.options.findIndex((o) => o.recommended === true),
           answer: { choice: null, hold: false, comment: "", seen: [] },
-          ui: {
-            option: 0,
-            view: views.includes(preferred) ? preferred : views[0],
-          },
+          // Each item opens on its own first view; the header applies only when chosen.
+          ui: { option: 0, view: views[0] },
           el: {},
         };
         decision.items.push(item);
@@ -263,7 +260,7 @@
       const list = paths(item, k, view);
       if (list.length === 0)
         return [h("span", { class: "no-image" }, "画像なし")];
-      const rect = item.def.focus && item.def.focus[view];
+      const rect = option.focus?.[view] ?? item.def.focus?.[view];
       return list.map((path, n) => {
         const [w, hgt] = sizes.get(path) || [0, 0];
         const suffix = list.length > 1 ? ` · ${n + 1}/${list.length}` : "";
@@ -330,20 +327,16 @@
       "目次 ",
       tocCount,
     );
-    const viewGroup = h(
-      "div",
-      { class: "seg-group", role: "group", "aria-label": "見え方" },
-      def.views.map((v) =>
-        h(
-          "button",
-          {
-            type: "button",
-            "data-value": v.id,
-            onclick: () => setPreferred(v.id),
-          },
-          v.label,
-        ),
-      ),
+    // One select for any number of views: the header keeps its height however many the round has.
+    const viewPick = h(
+      "select",
+      {
+        class: "view-pick",
+        "aria-label": "見え方",
+        onchange: (e) => setPreferred(e.target.value),
+      },
+      h("option", { value: "" }, "項目ごと"),
+      def.views.map((v) => h("option", { value: v.id }, v.label)),
     );
     const layoutGroup = h(
       "div",
@@ -371,10 +364,9 @@
       tocOpen,
       h("h1", { class: "round-title" }, round.title),
       h("p", { class: "progress", "aria-live": "polite" }, "進み ", progress),
-      viewGroup,
+      viewPick,
       layoutGroup,
     );
-    pressed(viewGroup, preferred);
     pressed(layoutGroup, layout);
 
     /* ----- table of contents ----- */
@@ -662,9 +654,8 @@
       if (visible.has(item)) markSeen(item);
     }
 
+    /** "" (項目ごと) or a view the item lacks: the item shows its own first view. */
     function setPreferred(view) {
-      preferred = view;
-      pressed(viewGroup, view);
       for (const item of items)
         showView(item, item.views.includes(view) ? view : item.views[0]);
     }
