@@ -1,4 +1,5 @@
 // A small synthetic round: 2 decisions, 5 items, 3 views.
+// D1.1 draws the changed area of the item, and option b its own.
 // Open it with board/index.html?round=../examples/basic/round.js
 RulingBoard.define({
   schema: 1,
@@ -37,6 +38,7 @@ RulingBoard.define({
               images: {
                 390: ["images/D1.1/b-390-1.svg", "images/D1.1/b-390-2.svg"],
               },
+              focus: { 1280: [24, 392, 1232, 392] },
             },
           ],
         },
