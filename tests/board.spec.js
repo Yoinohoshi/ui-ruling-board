@@ -285,6 +285,30 @@ test("?round= に外のアドレスは読まない", async ({ page }) => {
 test.describe("390px", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
+  test("並べる：狭い幅では案を縦に積み、横送りが出ない", async ({ page }) => {
+    await openBoard(page);
+    await page
+      .locator('.top [aria-label="表示"] button', { hasText: "並べる" })
+      .click();
+    const cols = item(page, "D1.1").locator(".stage figure.col");
+    await expect(cols).toHaveCount(3);
+    const boxes = await cols.evaluateAll((els) =>
+      els.map((e) => e.getBoundingClientRect().toJSON()),
+    );
+    for (let n = 1; n < boxes.length; n += 1) {
+      expect(boxes[n].left, `案 ${n + 1} の左端`).toBe(boxes[0].left);
+      expect(boxes[n].top, `案 ${n + 1} の上端`).toBeGreaterThanOrEqual(
+        boxes[n - 1].bottom,
+      );
+    }
+    const overflow = await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(0);
+  });
+
   test("どの見え方・表示でも横送りが出ない", async ({ page }) => {
     await openBoard(page);
     for (const layout of ["切り替え", "並べる"]) {
@@ -337,13 +361,25 @@ test("目次の印と読み上げの字・数え・移動", async ({ page }) => 
     '#toc .toc-decision[data-decision="D1"] .toc-count',
   );
 
+  /** The whole text of the link, and that it holds nothing but elements (no stray text). */
+  const linkIs = async (text) => {
+    await expect(link).toHaveText(text, { useInnerText: false });
+    expect(
+      await link.evaluate((el) =>
+        [...el.childNodes].every((n) => n.nodeType === 1),
+      ),
+    ).toBe(true);
+  };
+
   await expect(link.locator(".mark")).toHaveText("○");
   await expect(link.locator(".mark + .sr-only")).toHaveText("未選択");
+  await linkIs("○未選択2D1.2 保存の釦");
 
   await radio(page, "D1.2", "option:a").check();
   await expect(link.locator(".mark")).toHaveText("●");
   await expect(link.locator(".mark + .sr-only")).toHaveText("選択済 頭");
   await expect(link.locator(".pick")).toHaveText("②");
+  await linkIs("●選択済 頭2D1.2 保存の釦②");
   await expect(decisionCount).toHaveText("1/3");
   await expect(page.locator(".progress-count")).toHaveText("1/5");
 
@@ -351,17 +387,41 @@ test("目次の印と読み上げの字・数え・移動", async ({ page }) => 
   await expect(link.locator(".mark")).toHaveText("◐");
   await expect(link.locator(".mark + .sr-only")).toHaveText("保留");
   await expect(link.locator(".pick")).toHaveText("保留");
+  await linkIs("◐保留2D1.2 保存の釦保留");
   await expect(decisionCount).toHaveText("1/3");
 
+  const comment = item(page, "D1.2").locator("textarea.comment");
   await expect(link.locator(".has-comment")).toHaveCount(0);
-  await item(page, "D1.2").locator("textarea.comment").fill("条件つき");
+  await comment.fill("条件つき");
   await expect(link.locator(".has-comment")).toHaveText("コメントあり");
+  await linkIs("◐保留2D1.2 保存の釦保留コメントあり");
+  // The comment mark sits on the same row as the name.
+  const name = await link.locator(".name").boundingBox();
+  const mark = await link.locator(".has-comment").boundingBox();
+  expect(mark.y).toBeLessThan(name.y + name.height);
+  expect(mark.y + mark.height).toBeGreaterThan(name.y);
+  await comment.fill("  ");
+  await expect(link.locator(".has-comment")).toHaveCount(0);
+  await linkIs("◐保留2D1.2 保存の釦保留");
 
   await tocItem(page, "D2.2").click();
   await expect(page.locator("#ih-D2\\.2")).toBeFocused();
   await expect(tocItem(page, "D2.2")).toHaveAttribute(
     "aria-current",
     "location",
+  );
+  await expect(page.locator("#toc [aria-current]")).toHaveCount(1);
+});
+
+test("未選択の目次の項目はどれも、印・読み上げの字・番号・名前だけ", async ({
+  page,
+}) => {
+  const def = readRound();
+  await openBoard(page);
+  const all = def.decisions.flatMap((d) => d.items);
+  await expect(page.locator("#toc .toc-item")).toHaveText(
+    all.map((it, n) => `○未選択${n + 1}${it.id} ${it.title}`),
+    { useInnerText: false },
   );
 });
 
@@ -446,6 +506,39 @@ test.describe("切り替え", () => {
     await expect(item(page, "D1.1").locator(".stage figure.col")).toHaveCount(
       3,
     );
+  });
+
+  test("並べる：広い幅では案を同じ行に横へ並べ、切り替えへ戻すと 1 枠", async ({
+    page,
+  }) => {
+    await openBoard(page);
+    await page
+      .locator('.top [aria-label="表示"] button', { hasText: "並べる" })
+      .click();
+    const cols = item(page, "D1.1").locator(".stage figure.col");
+    await expect(cols).toHaveCount(3);
+    const boxes = await cols.evaluateAll((els) =>
+      els.map((e) => e.getBoundingClientRect().toJSON()),
+    );
+    for (let n = 1; n < boxes.length; n += 1) {
+      expect(boxes[n].top, `案 ${n + 1} の上端`).toBe(boxes[0].top);
+      expect(boxes[n].left, `案 ${n + 1} の左端`).toBeGreaterThanOrEqual(
+        boxes[n - 1].right,
+      );
+    }
+
+    await page
+      .locator('.top [aria-label="表示"] button', { hasText: "切り替え" })
+      .click();
+    await expect(item(page, "D1.1").locator(".stage figure.col")).toHaveCount(
+      0,
+    );
+    await expect(item(page, "D1.1").locator(".stage > .zoom")).toHaveCount(1);
+    expect(
+      await item(page, "D1.1")
+        .locator(".stage")
+        .evaluate((el) => window.getComputedStyle(el).display),
+    ).toBe("block");
   });
 
   test("変わる範囲の縁取りを、記述の位置に重ねる", async ({ page }) => {

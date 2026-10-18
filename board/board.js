@@ -462,7 +462,6 @@
     $("side").replaceChildren(nav);
     $("main").replaceChildren(...body);
     document.title = `${round.title} · ${NAME}`;
-    document.body.classList.toggle("layout-grid", layout === "grid");
 
     function itemSection(item) {
       const it = item.def;
@@ -609,6 +608,7 @@
       const { stage, zoom } = item.el;
       pressed(item.el.options, item.ui.option);
       if (item.el.views) pressed(item.el.views, item.ui.view);
+      stage.classList.toggle("grid", layout === "grid");
       keepScroll(stage, () => {
         if (layout === "grid") {
           stage.replaceChildren(
@@ -672,7 +672,6 @@
     function setLayout(next) {
       layout = next;
       pressed(layoutGroup, layout);
-      document.body.classList.toggle("layout-grid", layout === "grid");
       store.set(PREFS, { layout });
       for (const item of items) drawStage(item);
     }
@@ -837,25 +836,23 @@
         chosen: `選択済 ${k >= 0 ? item.def.options[k].label : ""}`,
         hold: "保留",
       }[state];
+      const pick = { none: null, chosen: numbered(k + 1), hold: "保留" }[state];
       item.el.toc.dataset.state = state;
+      // replaceChildren() would write null as the text "null": leave absent parts out.
       item.el.toc.replaceChildren(
-        h("span", { class: "mark", "aria-hidden": "true" }, MARK[state]),
-        h("span", { class: "sr-only" }, spoken),
-        h("span", { class: "num" }, item.number),
-        h("span", { class: "name" }, `${item.def.id} ${item.def.title}`),
-        state === "chosen"
-          ? h("span", { class: "pick", "aria-hidden": "true" }, numbered(k + 1))
-          : null,
-        state === "hold"
-          ? h("span", { class: "pick", "aria-hidden": "true" }, "保留")
-          : null,
-        a.comment.trim()
-          ? h(
+        ...[
+          h("span", { class: "mark", "aria-hidden": "true" }, MARK[state]),
+          h("span", { class: "sr-only" }, spoken),
+          h("span", { class: "num" }, item.number),
+          h("span", { class: "name" }, `${item.def.id} ${item.def.title}`),
+          pick && h("span", { class: "pick", "aria-hidden": "true" }, pick),
+          a.comment.trim() &&
+            h(
               "span",
               { class: "has-comment" },
               h("span", { class: "sr-only" }, "コメントあり"),
-            )
-          : null,
+            ),
+        ].filter(Boolean),
       );
     }
 
