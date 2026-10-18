@@ -1,0 +1,20 @@
+{
+  "name": "ui-ruling-board",
+  "version": "0.1.0",
+  "description": "用意した画像で UI の案を比べ、1 項目ずつ選んでコメントするための、依存のない比較 HTML",
+  "private": true,
+  "license": "MIT",
+  "author": "Yoinohoshi",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Yoinohoshi/ui-ruling-board.git"
+  },
+  "scripts": {
+    "check": "node scripts/check-round.mjs examples/basic/round.js",
+    "setup": "playwright install chromium",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
+  }
+}
