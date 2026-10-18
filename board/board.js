@@ -164,7 +164,7 @@
     let cleared = false;
     let saveTimer = 0;
     let announce = false;
-    const zoomState = { item: null, opener: null };
+    const zoomState = { item: null };
     const visible = new Set();
     const status = h("p", {
       class: "sr-only",
@@ -520,7 +520,7 @@
       el.zoom = h("button", {
         type: "button",
         class: "zoom",
-        onclick: (e) => openZoom(item, e.currentTarget),
+        onclick: () => openZoom(item),
       });
 
       const name = `pick-${it.id}`;
@@ -625,7 +625,7 @@
                   {
                     type: "button",
                     class: "zoom",
-                    onclick: (e) => openZoom(item, e.currentTarget, k),
+                    onclick: () => openZoom(item, k),
                   },
                   segments(item, k),
                 ),
@@ -710,16 +710,13 @@
       e.preventDefault();
       showOption(item, k);
     });
+    // Closing returns focus to the pressed image by itself: showModal() remembers it.
     zoomDialog.addEventListener("close", () => {
-      const opener = zoomState.opener;
       zoomState.item = null;
-      zoomState.opener = null;
-      if (opener && opener.isConnected) opener.focus();
     });
 
-    function openZoom(item, opener, k = item.ui.option) {
+    function openZoom(item, k = item.ui.option) {
       zoomState.item = item;
-      zoomState.opener = opener;
       if (k !== item.ui.option) showOption(item, k);
       zoomTitle.textContent = `${item.legend} · ${viewLabel.get(item.ui.view)}`;
       zoomOptions.replaceChildren(
@@ -786,7 +783,7 @@
       (entries) => {
         for (const entry of entries) {
           const item = byStage.get(entry.target);
-          if (entry.isIntersecting && entry.intersectionRatio >= SEEN_RATIO) {
+          if (entry.intersectionRatio >= SEEN_RATIO) {
             visible.add(item);
             markSeen(item);
           } else {

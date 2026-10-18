@@ -122,19 +122,10 @@ test.describe("S3: どの見え方を選んでも各項目の画像に届く", (
     }) => {
       const def = readRound();
       const labels = new Map(def.views.map((v) => [v.id, v.label]));
-      await openBoard(page);
-      await page
-        .locator('.top [aria-label="表示"] button', { hasText: layout })
-        .click();
-      for (const view of def.views) {
-        await page
-          .locator('.top [aria-label="見え方"] button', {
-            hasText: new RegExp(`^${view.label}$`),
-          })
-          .click();
+      const everyItemShows = async (preferred) => {
         for (const it of def.decisions.flatMap((d) => d.items)) {
           const views = it.views || def.views.map((v) => v.id);
-          const shown = views.includes(view.id) ? view.id : views[0];
+          const shown = views.includes(preferred) ? preferred : views[0];
           const imgs = item(page, it.id).locator(".stage img");
           await expect
             .poll(() =>
@@ -152,6 +143,21 @@ test.describe("S3: どの見え方を選んでも各項目の画像に届く", (
             expect(plain.endsWith(` · ${labels.get(shown)}`), alt).toBe(true);
           }
         }
+      };
+
+      await openBoard(page);
+      // As opened, before any header button is pressed: the preference is the first view.
+      await everyItemShows(def.views[0].id);
+      await page
+        .locator('.top [aria-label="表示"] button', { hasText: layout })
+        .click();
+      for (const view of def.views) {
+        await page
+          .locator('.top [aria-label="見え方"] button', {
+            hasText: new RegExp(`^${view.label}$`),
+          })
+          .click();
+        await everyItemShows(view.id);
       }
     });
   }
@@ -183,16 +189,27 @@ test.describe("S3: どの見え方を選んでも各項目の画像に届く", (
     const stage = it.locator(".stage");
     const line = async () =>
       (await answerLines(page)).find((l) => l.startsWith("- D2.2 "));
+    /** Leaves only the top 40px of the frame at the bottom of the screen, and waits two frames. */
+    const toEdge = async () => {
+      await stage.evaluate(
+        (el) =>
+          new Promise((done) => {
+            window.scrollBy(
+              0,
+              el.getBoundingClientRect().top - (window.innerHeight - 40),
+            );
+            window.requestAnimationFrame(() =>
+              window.requestAnimationFrame(done),
+            );
+          }),
+      );
+      const top = await stage.evaluate((el) => el.getBoundingClientRect().top);
+      expect(top).toBeGreaterThan((await page.viewportSize()).height - 60);
+      return top;
+    };
 
     // Only the top 40px of the frame (well under half) at the bottom of the screen, shown at 1280.
-    await stage.evaluate((el) =>
-      window.scrollBy(
-        0,
-        el.getBoundingClientRect().top - (window.innerHeight - 40),
-      ),
-    );
-    const top = await stage.evaluate((el) => el.getBoundingClientRect().top);
-    expect(top).toBeGreaterThan((await page.viewportSize()).height - 60);
+    const top = await toEdge();
     // While still only an edge is on screen, switch the item to 390-menu.
     await it
       .getByRole("button", { name: "390 · メニュー", exact: true })
@@ -209,6 +226,16 @@ test.describe("S3: どの見え方を選んでも各項目の画像に届く", (
     await expect
       .poll(line)
       .toBe("- D2.2 メニューの項目の並び: 未選択 · 見た: 390-menu");
+
+    // From fully on screen back to only an edge: switching to 1280 there is not seen either.
+    const edge = await toEdge();
+    await it.getByRole("button", { name: "1280", exact: true }).click();
+    expect(await stage.evaluate((el) => el.getBoundingClientRect().top)).toBe(
+      edge,
+    );
+    expect(await line()).toBe(
+      "- D2.2 メニューの項目の並び: 未選択 · 見た: 390-menu",
+    );
   });
 });
 
@@ -599,6 +626,11 @@ test.describe("下書き", () => {
   test("下書きを消すと戻らない", async ({ page }) => {
     await openBoard(page);
     await radio(page, "D1.2", "option:b").check();
+    // The draft is really stored first: it comes back on reload.
+    await page.reload();
+    await expect(page.locator("body")).toHaveClass(/is-ready/);
+    await expect(radio(page, "D1.2", "option:b")).toBeChecked();
+
     page.once("dialog", (d) => d.accept());
     const reloaded = page.waitForEvent("load");
     await page.getByRole("button", { name: "下書きを消す" }).click();

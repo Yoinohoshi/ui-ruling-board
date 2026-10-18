@@ -76,7 +76,8 @@ test.describe("check-round", () => {
 
   for (const [name, file, bytes] of [
     ["閉じていない SVG", "cut.svg", SVG],
-    ["SVG でない .svg", "text.svg", "<html></html>"],
+    // Ends with </svg>, so only the check of the head catches it.
+    ["根が svg でない .svg", "text.svg", `<html><body>${SVG}</svg>`],
     ["PNG でない .png", "fake.png", "not a png"],
     ["JPEG でない .jpg", "fake.jpg", Buffer.from("89504e470d0a1a0a", "hex")],
     [
@@ -157,6 +158,28 @@ test.describe("install", () => {
     expect(again.status).toBe(1);
     expect(again.stderr).toContain("--force");
     expect(run("install.mjs", dir, "--force").status).toBe(0);
+  });
+});
+
+test.describe("digest（記述のハッシュ）", () => {
+  test('FNV-1a（32 bit）の既知の値："1" は 340ca71c', () => {
+    // digest(1) hashes the one-character text "1".
+    expect(digest(1)).toBe("340ca71c");
+  });
+
+  test("キーの順と undefined のキーに依らない", () => {
+    expect(digest({ a: 1, b: [1, { c: "x", d: 2 }] })).toBe(
+      digest({ b: [1, { d: 2, c: "x" }], a: 1 }),
+    );
+    expect(digest({ a: 1, b: undefined })).toBe(digest({ a: 1 }));
+  });
+
+  test("記述が 1 字でも変われば変わる・配列の順が変われば変わる", () => {
+    const def = readRound();
+    const changed = readRound();
+    changed.round.title += "。";
+    expect(digest(changed)).not.toBe(digest(def));
+    expect(digest({ a: [1, 2] })).not.toBe(digest({ a: [2, 1] }));
   });
 });
 
