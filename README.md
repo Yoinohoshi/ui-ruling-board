@@ -1,5 +1,7 @@
 # ui-ruling-board
 
+ローカルの発行画面は `npm run build:author` で `artifacts/author.html` に生成できる。項目・画像・回答形式・金額を設定し、検査後に回答用の単一HTMLを保存する。使い方と発行条件は [発行用HTMLの手順](docs/AUTHORING.md) を参照。
+
 UI の配置や見た目を、用意した画像で比べて 1 項目ずつ裁定するための、依存のない比較 HTML。
 
 - 画像は利用者が用意して置く。閲覧する器は画像を作らない。開発用の準備コマンドで、撮影済み画像の差と撮り直しを検査し、拡大画像を生成できる。
@@ -149,7 +151,7 @@ node scripts/check-round.mjs path/to/round-1/round.js
 ```
 # 回答：設定画面の配置（settings-r1）
 回答先: https://example.com/rounds/1
-比較元: v1.2.0 / 記述: 9f3c2a1b / 器: ui-ruling-board 0.3.0
+比較元: v1.2.0 / 記述: 9f3c2a1b / 器: ui-ruling-board 0.4.0
 回答日: 2026-10-21 · 選択 2/3（保留 1）
 
 ## D1 詳細の置き場
