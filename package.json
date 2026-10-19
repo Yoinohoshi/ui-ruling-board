@@ -1,6 +1,6 @@
 {
   "name": "ui-ruling-board",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "用意した画像で UI の案を比べ、1 項目ずつ選んでコメントするための、依存のない比較 HTML",
   "private": true,
   "license": "MIT",
@@ -12,7 +12,12 @@
   "scripts": {
     "check": "node scripts/check-round.mjs examples/basic/round.js",
     "setup": "playwright install chromium",
-    "test": "playwright test"
+    "test": "playwright test",
+    "prepare:round": "node scripts/prepare-round.mjs",
+    "check:folder": "node scripts/check-folder.mjs",
+    "verify:board": "node scripts/verify-board.mjs",
+    "publish:round": "node scripts/publish-round.mjs",
+    "example:capture": "node scripts/example-capture.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1"

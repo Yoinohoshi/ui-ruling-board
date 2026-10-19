@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BOARD = join(ROOT, "board");
-const FILES = ["index.html", "board.js", "board.css", "validate.js"];
+export const FILES = ["index.html", "board.js", "board.css", "validate.js"];
 const LOCK = "board.lock.json";
 
 const sha256 = (file) =>
@@ -49,7 +49,7 @@ function commit() {
   }
 }
 
-function install(dir, force) {
+export function install(dir, force = false) {
   const lockFile = join(dir, LOCK);
   if (dir === BOARD) {
     console.error("器のフォルダそのものには入れない");
@@ -125,4 +125,4 @@ function main(argv) {
     : install(dir, flags.includes("--force"));
 }
 
-process.exitCode = main(process.argv.slice(2));
+if (import.meta.main) process.exitCode = main(process.argv.slice(2));

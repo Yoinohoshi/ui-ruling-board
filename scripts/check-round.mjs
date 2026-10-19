@@ -15,12 +15,12 @@ const require = createRequire(import.meta.url);
 const { validate, listImages, digest } = require("../board/validate.js");
 
 /** Runs a round file and returns what it passed to RulingBoard.define (or throws). */
-function readRound(file) {
+export function readRound(file) {
   const calls = [];
   runInNewContext(
     readFileSync(file, "utf8"),
     { RulingBoard: { define: (def) => calls.push(def) } },
-    { filename: file },
+    { filename: file, timeout: 5000 },
   );
   if (calls.length !== 1)
     throw new Error(`RulingBoard.define が ${calls.length} 回呼ばれた`);
@@ -44,7 +44,7 @@ const SVG_TAIL = /<\/svg>\s*$/;
  * Not a parser: catches files that are not of their format, and SVGs cut short
  * (an <svg> root that is never closed), which a browser refuses to draw.
  */
-function looksLikeImage(file) {
+export function looksLikeImage(file) {
   const bytes = readFileSync(file);
   const ext = file.slice(file.lastIndexOf(".") + 1).toLowerCase();
   if (ext === "svg") {
@@ -58,7 +58,7 @@ function looksLikeImage(file) {
 }
 
 /** Returns every problem of a round file as { path, message }. */
-function checkRound(file) {
+export function checkRound(file) {
   let def;
   try {
     def = readRound(file);

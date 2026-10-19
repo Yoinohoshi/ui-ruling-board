@@ -188,4 +188,9 @@ test("版は board.js の 1 か所で、package.json と一致する", () => {
     fs.readFileSync(path.join(ROOT, "package.json"), "utf8"),
   );
   expect(pkg.version).toBe(boardVersion());
+  const lock = JSON.parse(
+    fs.readFileSync(path.join(ROOT, "package-lock.json"), "utf8"),
+  );
+  expect(lock.version).toBe(pkg.version);
+  expect(lock.packages[""].version).toBe(pkg.version);
 });

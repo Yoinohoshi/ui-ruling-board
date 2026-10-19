@@ -5,6 +5,7 @@ const { defineConfig, devices } = require("@playwright/test");
 module.exports = defineConfig({
   testDir: "tests",
   fullyParallel: true,
+  workers: 4,
   forbidOnly: true,
   reporter: [["list"]],
   use: {
