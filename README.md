@@ -151,7 +151,7 @@ node scripts/check-round.mjs path/to/round-1/round.js
 ```
 # 回答：設定画面の配置（settings-r1）
 回答先: https://example.com/rounds/1
-比較元: v1.2.0 / 記述: 9f3c2a1b / 器: ui-ruling-board 0.4.0
+比較元: v1.2.0 / 記述: 9f3c2a1b / 器: ui-ruling-board 0.4.1
 回答日: 2026-10-21 · 選択 2/3（保留 1）
 
 ## D1 詳細の置き場

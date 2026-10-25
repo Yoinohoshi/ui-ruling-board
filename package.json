@@ -1,6 +1,6 @@
 {
   "name": "ui-ruling-board",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "用意した画像で UI の案を比べ、1 項目ずつ選んでコメントするための、依存のない比較 HTML",
   "private": true,
   "license": "MIT",
