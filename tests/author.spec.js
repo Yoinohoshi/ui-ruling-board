@@ -1,5 +1,6 @@
 const { test, expect } = require("@playwright/test");
 const fs = require("node:fs");
+const zlib = require("node:zlib");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
@@ -171,21 +172,45 @@ test("パスワードと確認が違えば保存しない", async ({ page }) => 
   expect(downloads).toBe(0);
 });
 
-test("封をした暗号文の 1 字の改変は、正しいパスワードでも開かない", async ({ page }) => {
+async function sealedSample(page) {
   await sample(page); await preview(page);
   await page.locator("#seal-password").fill("pw"); await page.locator("#seal-confirm").fill("pw");
   const output = test.info().outputPath("sealed.html"); await save(page, "#publish", output);
-  let html = fs.readFileSync(output, "utf8");
-  const envelope = JSON.parse(PACKAGE.exec(html)[1]);
-  const at = envelope.sealed.data.length >> 1;
-  envelope.sealed.data = envelope.sealed.data.slice(0, at) + (envelope.sealed.data[at] === "A" ? "B" : "A") + envelope.sealed.data.slice(at + 1);
-  html = html.replace(PACKAGE, () => `<script id="ruling-board-package" type="application/json">${JSON.stringify(envelope)}</script>`);
-  const corrupt = test.info().outputPath("sealed-corrupt.html"); fs.writeFileSync(corrupt, html);
-  await page.goto(url(corrupt));
-  await page.locator("#unlock-password").fill("pw");
+  return fs.readFileSync(output, "utf8");
+}
+async function openWith(page, html, name, password = "pw") {
+  const file = test.info().outputPath(name); fs.writeFileSync(file, html);
+  await page.goto(url(file));
+  await page.locator("#unlock-password").fill(password);
   await page.getByRole("button", { name: "開く" }).click();
+}
+const withSealed = (html, sealed) => html.replace(PACKAGE, () => `<script id="ruling-board-package" type="application/json">${JSON.stringify({ schema: 1, sealed })}</script>`);
+
+for (const [name, mutate] of [
+  ["暗号文の 1 字の改変", s => { const at = s.data.length >> 1; s.data = s.data.slice(0, at) + (s.data[at] === "A" ? "B" : "A") + s.data.slice(at + 1); }],
+  ["圧縮の欄を消す改変", s => { delete s.compression; }],
+]) test(`封をした${name}は、正しいパスワードでも開かない`, async ({ page }) => {
+  const html = await sealedSample(page);
+  const { sealed } = JSON.parse(PACKAGE.exec(html)[1]);
+  expect(sealed.compression).toBe("gzip");
+  mutate(sealed);
+  await openWith(page, withSealed(html, sealed), "sealed-corrupt.html");
   await expect(page.locator(".unlock-error")).toHaveText("パスワードが違うか、データが壊れています");
   await expect(page.locator("body")).not.toHaveClass(/is-ready/);
+});
+
+test("圧縮の欄が無い旧形式（0.4.0 の最初の封）も開く", async ({ page }) => {
+  const html = await sealedSample(page);
+  const { sealed } = JSON.parse(PACKAGE.exec(html)[1]);
+  const subtle = globalThis.crypto.subtle, enc = new TextEncoder();
+  const keyOf = async (salt, usage) => subtle.deriveKey({ name: "PBKDF2", hash: "SHA-256", salt, iterations: sealed.iterations }, await subtle.importKey("raw", enc.encode("pw"), "PBKDF2", false, ["deriveKey"]), { name: "AES-GCM", length: 256 }, false, [usage]);
+  const salt = Buffer.from(sealed.salt, "base64"), iv = Buffer.from(sealed.iv, "base64");
+  const packed = await subtle.decrypt({ name: "AES-GCM", iv, additionalData: enc.encode("ui-ruling-board:sealed:1:gzip") }, await keyOf(salt, "decrypt"), Buffer.from(sealed.data, "base64"));
+  const plain = zlib.gunzipSync(Buffer.from(packed));
+  const data = await subtle.encrypt({ name: "AES-GCM", iv, additionalData: enc.encode("ui-ruling-board:sealed:1") }, await keyOf(salt, "encrypt"), plain);
+  const legacy = { kdf: sealed.kdf, cipher: sealed.cipher, iterations: sealed.iterations, salt: sealed.salt, iv: sealed.iv, data: Buffer.from(data).toString("base64") };
+  await openWith(page, withSealed(html, legacy), "sealed-legacy.html");
+  await expect(page.locator("body")).toHaveClass(/is-ready/);
 });
 
 test("狭幅とキーボードで発行画面を操作できる", async ({ page }) => {
