@@ -1,38 +1,32 @@
 /* ui-ruling-board — the board. No external fonts, icons or libraries. */
 
+/* Each color names its light and dark value once. The system preference picks
+   one unless the host fixes it with data-theme on the root (e.g. an embedding page). */
 :root {
   color-scheme: light dark;
-  --bg: #f7f6f2;
-  --panel: #ffffff;
-  --ink: #23221f;
-  --muted: #69655c;
-  --line: #d9d5cb;
-  --accent: #1d6b63;
-  --accent-ink: #ffffff;
-  --accent-soft: #dcefeb;
-  --hold: #8a5a00;
-  --focus: #c2410c;
-  --stage: #ecebe6;
+  --bg: light-dark(#f7f6f2, #1b1c1e);
+  --panel: light-dark(#ffffff, #242528);
+  --ink: light-dark(#23221f, #ecebe6);
+  --muted: light-dark(#69655c, #a7a399);
+  --line: light-dark(#d9d5cb, #3d3e42);
+  --accent: light-dark(#1d6b63, #6fc3b8);
+  --accent-ink: light-dark(#ffffff, #10201e);
+  --accent-soft: light-dark(#dcefeb, #23403c);
+  --hold: light-dark(#8a5a00, #e8b04a);
+  --focus: light-dark(#c2410c, #fb923c);
+  --stage: light-dark(#ecebe6, #2d2e31);
   --top-h: 3.5rem;
   --side-w: 18rem;
   font-family: system-ui, sans-serif;
   line-height: 1.5;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1b1c1e;
-    --panel: #242528;
-    --ink: #ecebe6;
-    --muted: #a7a399;
-    --line: #3d3e42;
-    --accent: #6fc3b8;
-    --accent-ink: #10201e;
-    --accent-soft: #23403c;
-    --hold: #e8b04a;
-    --focus: #fb923c;
-    --stage: #2d2e31;
-  }
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 * {

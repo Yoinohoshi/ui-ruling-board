@@ -8,7 +8,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.4.1";
+  const VERSION = "0.5.0";
   const NAME = "ui-ruling-board";
   const PREFS = `${NAME}:prefs`;
   const CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
