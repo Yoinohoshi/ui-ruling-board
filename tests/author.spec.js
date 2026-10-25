@@ -199,6 +199,14 @@ for (const [name, mutate] of [
   await expect(page.locator("body")).not.toHaveClass(/is-ready/);
 });
 
+test("標準の base64 の関数が無いブラウザでは、開けないと告げる", async ({ page }) => {
+  const html = await sealedSample(page);
+  await page.addInitScript(() => { delete Uint8Array.fromBase64; });
+  await openWith(page, html, "sealed-old-browser.html");
+  await expect(page.locator(".unlock-error")).toHaveText("このブラウザでは開けません（Chromium 140 以降が必要）");
+  await expect(page.locator("body")).not.toHaveClass(/is-ready/);
+});
+
 test("圧縮の欄が無い旧形式（0.4.0 の最初の封）も開く", async ({ page }) => {
   const html = await sealedSample(page);
   const { sealed } = JSON.parse(PACKAGE.exec(html)[1]);

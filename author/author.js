@@ -6,7 +6,6 @@
   let project, revision = 0, ready = null, busy = false, detailDirty = false;
   const empty = () => ({ schema: 1, description: { schema: 1, round: { id: "review-r1", title: "新しい比較", output: { formats: ["markdown", "json", "text", "csv"], default: "markdown" } }, views: [{ id: "main", label: "全体" }], decisions: [{ id: "D1", title: "比較する項目", items: [] }] }, captures: {}, assets: {} });
   const json = value => JSON.stringify(value, null, 2);
-  const safeJson = value => JSON.stringify(value).replaceAll("<", "\\u003c");
   const sha = async value => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))), n => n.toString(16).padStart(2, "0")).join("");
   function status(text, error = false) { $("status").textContent = text; $("status").classList.toggle("error", error); }
   function invalidate() {
@@ -45,10 +44,7 @@
     if (!/\.(png|jpe?g|webp|svg)$/i.test(file.name)) throw Error(`画像の形式が不正: ${file.name}`);
     if (file.size > 40000000) throw Error(`画像が40MBを超えています: ${file.name}`);
     const type = /\.svg$/i.test(file.name) ? "svg+xml" : /\.jpe?g$/i.test(file.name) ? "jpeg" : file.name.split(".").pop().toLowerCase();
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    let binary = ""; for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
-    const data = `data:image/${type};base64,${btoa(binary)}`;
-    return data;
+    return `data:image/${type};base64,${new Uint8Array(await file.arrayBuffer()).toBase64()}`;
   }
   function inputImages(item, option, view, capture, kind) {
     const names = typeof capture[kind]?.[option.id] === "string" ? [capture[kind][option.id]] : capture[kind]?.[option.id] ?? [];
@@ -135,12 +131,7 @@
     const link = el("a", { href: url, download: name }); document.body.append(link); link.click(); link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   }
-  function packageHtml(envelope) {
-    const script = value => `<script>${value.replace(/<\/script/gi, "<\\/script")}<` + "/script>";
-    return template.html.replace('<link rel="stylesheet" href="board.css" />', () => `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; base-uri 'none'; form-action 'none'"><style>${template.css}</style>`)
-      .replace('<script src="validate.js"></script>', () => `<script id="ruling-board-package" type="application/json">${safeJson(envelope)}<` + "/script>" + script(template.validate))
-      .replace('<script src="board.js"></script>', () => script(template.seal) + script(template.board));
-  }
+  const packageHtml = envelope => globalThis.RulingBoardPackage.packageHtml(template, envelope);
   // The previewed plain envelope is sealed whole, then opened again before saving.
   async function sealedHtml(envelope, password) {
     const plain = JSON.stringify(envelope);
