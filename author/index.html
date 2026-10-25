@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-src blob:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>発行スタジオ · ui-ruling-board</title>
+<style>/*AUTHOR_CSS*/</style>
+</head>
+<body>
+<a class="skip" href="#editor">設定へ</a>
+<header><div><span class="brand">ui-ruling-board</span><span class="badge">ローカルで作成</span></div><h1>比較するページを、ここから。</h1><p>項目と画像を用意して、回答用のHTMLを発行します。選んだファイルは外部へ送信されません。</p></header>
+<main id="editor">
+<nav class="toolbar" aria-label="プロジェクト"><button id="sample">サンプルで試す</button><label class="file-button">設定を開く<input id="open-project" type="file" accept=".json,application/json"></label><label class="file-button">撮影元フォルダを開く<input id="open-folder" type="file" webkitdirectory multiple></label><button id="save-project">設定を保存</button><button id="new-project" class="quiet">新しく作る</button></nav>
+<div class="columns"><div>
+<section class="panel"><h2><span>01</span> ページの情報</h2><div class="fields"><label>タイトル<input id="round-title" required placeholder="例：設定画面の比較"></label><label>回のID<input id="round-id" required placeholder="例：settings-r1" pattern="[A-Za-z0-9][A-Za-z0-9._-]*"></label><label>比較元<input id="round-source" placeholder="版・コミット・入力条件"></label><label>回答先<input id="round-answer-to" placeholder="任意のURLや宛先"></label></div></section>
+<section class="panel"><div class="section-heading"><h2><span>02</span> 比較する項目</h2><button id="add-item">項目を追加</button></div><p class="hint">各案に元画像と、同じ状態をもう一度撮った画像を設定してください。複数ファイルは選択順に縦の段として扱います。</p><div id="items"></div></section>
+<section class="panel"><h2><span>03</span> 回答と金額</h2><fieldset id="formats"><legend>回答者が選べる出力形式</legend><label><input type="checkbox" value="markdown" checked> Markdown</label><label><input type="checkbox" value="json" checked> JSON</label><label><input type="checkbox" value="text" checked> テキスト</label><label><input type="checkbox" value="csv" checked> CSV</label></fieldset><label>最初の出力形式<select id="default-format"><option value="markdown">Markdown</option><option value="json">JSON</option><option value="text">テキスト</option><option value="csv">CSV</option></select></label><label class="toggle"><input id="pricing" type="checkbox"> 選択肢に金額を付け、ページ最下部に合計を表示する</label><p class="hint">金額は日本円の整数です。未設定と0円を区別し、未選択・保留は未確定として表示します。税・手数料の自動加算はありません。</p></section>
+<details class="panel"><summary>詳細設定（複数の見え方・名指し拡大・項目の順序）</summary><p class="hint">項目定義と撮影条件をJSONで編集できます。画像データは保持されます。</p><label>項目定義<textarea id="description-json" rows="12" spellcheck="false"></textarea></label><label>撮影条件<textarea id="captures-json" rows="10" spellcheck="false"></textarea></label><button id="apply-json">詳細設定を適用</button></details>
+</div><aside class="panel publish"><h2>発行する</h2><p>JS・CSS・画像を含む、1つのHTMLとして保存します。</p><ol><li>設定と画像を検査</li><li>拡大画像を生成</li><li>プレビューを確認</li><li>HTMLを保存</li></ol><button id="preview" class="primary">検査してプレビュー</button><label>パスワード（任意）<input id="seal-password" type="password" autocomplete="new-password"></label><label>パスワード（確認）<input id="seal-confirm" type="password" autocomplete="new-password"></label><button id="publish" disabled>回答用HTMLを保存</button><button id="save-evidence" disabled>検査記録を保存</button><p id="status" role="status" aria-live="polite">項目を入力するか、サンプルを開いてください。</p><p id="build-status" class="hint"></p><p class="hint">設定を変えたら、もう一度検査してください。保存操作後の保存先・取消はブラウザで確認してください。</p></aside></div>
+<section class="panel preview-panel"><div class="section-heading"><h2>回答ページのプレビュー</h2><label>表示幅<select id="preview-width"><option value="100%">画面に合わせる</option><option value="390px">携帯（390px）</option></select></label></div><div class="preview-wrap"><iframe id="preview-frame" title="発行先のプレビュー" sandbox="allow-scripts allow-same-origin allow-downloads allow-modals" referrerpolicy="no-referrer"></iframe></div></section>
+</main><footer>ui-ruling-board · 発行スタジオ <span id="version"></span></footer>
+<script id="board-template" type="application/json">/*BOARD_TEMPLATE*/</script>
+<!--AUTHOR_SCRIPTS-->
+</body></html>

@@ -19,7 +19,9 @@
   const SLOTS = ["decision", "item", "option", "view"];
   const KEYS = {
     top: ["schema", "round", "views", "images", "decisions"],
-    round: ["id", "title", "answerTo", "source", "created"],
+    round: ["id", "title", "answerTo", "source", "created", "output", "pricing"],
+    output: ["formats", "default"],
+    pricing: ["currency"],
     view: ["id", "label"],
     decision: ["id", "title", "note", "items"],
     item: ["id", "title", "question", "views", "focus", "options"],
@@ -31,6 +33,7 @@
       "images",
       "noImage",
       "focus",
+      "price",
     ],
   };
 
@@ -111,6 +114,12 @@
       for (const key of ["answerTo", "source", "created"]) {
         text(def.round, key, "round", false);
       }
+      if (def.round.output !== undefined && record(def.round.output, "round.output", "output")) {
+        const formats = def.round.output.formats;
+        if (!Array.isArray(formats) || !formats.length || formats.some(f => !["markdown", "json", "text", "csv"].includes(f)) || new Set(formats).size !== formats.length) fail("round.output.formats", "Markdown・JSON・テキスト・CSVから重複せず選ぶ");
+        if (!Array.isArray(formats) || !formats.includes(def.round.output.default)) fail("round.output.default", "選択した形式に含まれていない");
+      }
+      if (def.round.pricing !== undefined && record(def.round.pricing, "round.pricing", "pricing") && def.round.pricing.currency !== "JPY") fail("round.pricing.currency", "金額は日本円（JPY）の整数で指定する");
     }
 
     const viewIds = new Set();
@@ -177,6 +186,10 @@
         if (!record(option, op, "option")) return;
         ident(option, op, optionIds);
         text(option, "label", op, true);
+        if (option.price !== undefined) {
+          if (!Number.isSafeInteger(option.price) || option.price < 0) fail(`${op}.price`, "0以上の安全な整数の金額ではない");
+          if (!def.round?.pricing) fail(`${op}.price`, "回の金額設定が無い");
+        }
         if (option.recommended !== undefined) {
           if (typeof option.recommended !== "boolean") {
             fail(`${op}.recommended`, "true か false ではない");
@@ -249,6 +262,10 @@
       );
     });
 
+    if (def.round?.pricing && errors.length === 0) {
+      const maximum = def.decisions.flatMap(d => d.items).reduce((sum, item) => sum + Math.max(...item.options.map(o => o.price ?? 0)), 0);
+      if (!Number.isSafeInteger(maximum)) fail("round.pricing", "合計が安全に計算できる範囲を超える");
+    }
     return errors;
   }
 

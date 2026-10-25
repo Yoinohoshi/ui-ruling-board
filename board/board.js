@@ -8,7 +8,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.2.0";
+  const VERSION = "0.4.0";
   const NAME = "ui-ruling-board";
   const PREFS = `${NAME}:prefs`;
   const CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
@@ -67,7 +67,8 @@
 
   const roundSrc =
     new URLSearchParams(location.search).get("round") || "round.js";
-  const roundUrl = new URL(roundSrc, location.href);
+  const roundUrl = document.getElementById("ruling-board-package") ? null : new URL(roundSrc, location.href);
+  let embedded = null;
   let defined = false;
 
   function define(def) {
@@ -90,7 +91,7 @@
 
   globalThis.RulingBoard = Object.freeze({ VERSION, define });
 
-  const imageUrl = (path) => new URL(path, roundUrl).href;
+  const imageUrl = (path) => embedded ? embedded.assets[path] : new URL(path, roundUrl).href;
   const sizes = new Map();
 
   function preload(def) {
@@ -132,7 +133,16 @@
     );
   }
 
-  function start() {
+  async function start() {
+    const inline = document.getElementById("ruling-board-package");
+    if (inline) {
+      try {
+        const envelope = JSON.parse(inline.textContent);
+        if (envelope.sealed) unlock(envelope.sealed);
+        else await openPackage(envelope);
+      } catch (error) { showErrors([{ path: "発行データ", message: error.message }]); }
+      return;
+    }
     if (/^[a-z][a-z0-9+.-]*:|^[\\/]/i.test(roundSrc)) {
       showErrors([{ path: roundSrc, message: "相対パスではない" }]);
       return;
@@ -150,10 +160,68 @@
     document.body.append(script);
   }
 
+  async function openPackage(envelope) {
+    const bytes = new TextEncoder().encode(JSON.stringify(envelope.payload));
+    const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), n => n.toString(16).padStart(2, "0")).join("");
+    if (hash !== envelope.sha256) throw Error("内包データが発行後に変更されています");
+    const errors = V.validate(envelope.payload.def);
+    if (errors.length) throw Error(errors.map(e => `${e.path}: ${e.message}`).join("\n"));
+    for (const image of V.listImages(envelope.payload.def)) {
+      if (!Object.hasOwn(envelope.payload.assets, image.path) || !/^data:image\/(png|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/.test(envelope.payload.assets[image.path])) throw Error(`内包画像が不正: ${image.path}`);
+    }
+    embedded = envelope.payload;
+    define(embedded.def);
+  }
+
+  // A sealed package holds the whole plain envelope, so nothing of the round is
+  // readable before the password opens it. A wrong password may be retried.
+  function unlock(sealed) {
+    const input = h("input", { type: "password", id: "unlock-password", autocomplete: "current-password", required: true });
+    const message = h("p", { class: "unlock-error", role: "alert" });
+    const button = h("button", { type: "submit" }, "開く");
+    const form = h(
+      "form",
+      { class: "unlock", "aria-labelledby": "unlock-title" },
+      h("h1", { id: "unlock-title" }, "パスワード"),
+      h("label", { for: "unlock-password", class: "sr-only" }, "パスワード"),
+      input,
+      button,
+      message,
+    );
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      button.disabled = true;
+      message.textContent = "";
+      let plain;
+      try {
+        plain = await globalThis.RulingBoardSeal.open(sealed, input.value);
+      } catch (error) {
+        message.textContent = error.message;
+        button.disabled = false;
+        input.select();
+        return;
+      }
+      document.body.classList.remove("is-locked");
+      try { await openPackage(JSON.parse(plain)); } catch (error) { showErrors([{ path: "発行データ", message: error.message }]); }
+    });
+    document.body.classList.add("is-locked");
+    $("main").removeAttribute("aria-busy");
+    $("main").replaceChildren(form);
+    input.focus();
+  }
+
   /* ---------- the board ---------- */
 
   function render(def) {
     const round = def.round;
+    const formats = round.output?.formats ?? ["markdown"];
+    let answerFormat = round.output?.default ?? "markdown";
+    const formatInfo = {
+      markdown: ["Markdown", "md", "text/markdown"], json: ["JSON", "json", "application/json"],
+      text: ["テキスト", "txt", "text/plain"], csv: ["CSV", "csv", "text/csv"],
+    };
+    const money = value => `${value.toLocaleString("ja-JP")} 円`;
+    const totalBox = h("p", { id: "price-total", "aria-live": "polite" });
     const digest = V.digest(def);
     const draftKey = `${NAME}:${round.id}`;
     const viewLabel = new Map(def.views.map((v) => [v.id, v.label]));
@@ -435,6 +503,7 @@
         "section",
         { class: "answer", id: "answer", "aria-labelledby": "answer-title" },
         h("h2", { id: "answer-title", tabindex: "-1" }, "回答案"),
+        formats.length > 1 && h("label", {}, "出力形式 ", h("select", { id: "answer-format", onchange: e => { answerFormat = e.target.value; answerBox.value = answerText(); } }, formats.map(f => h("option", { value: f, selected: f === answerFormat }, formatInfo[f][0])))),
         answerBox,
         h(
           "div",
@@ -450,6 +519,8 @@
         status,
       ),
     );
+
+    if (round.pricing) body.push(h("section", { class: "answer", "aria-labelledby": "total-title" }, h("h2", { id: "total-title" }, "選択した金額の合計"), totalBox));
 
     $("side").replaceChildren(nav);
     $("main").replaceChildren(...body);
@@ -541,7 +612,7 @@
           "div",
           { class: "choices" },
           it.options.map((o, k) =>
-            radio(`option:${o.id}`, optionText(o, k), () => {
+            radio(`option:${o.id}`, [optionText(o, k), round.pricing ? ` · ${o.price === undefined ? "金額未設定" : money(o.price)}` : ""], () => {
               item.answer.choice = o.id;
               item.answer.hold = false;
               showOption(item, k);
@@ -856,7 +927,45 @@
       tocCount.textContent = text;
     }
 
+    function totals() {
+      let total = 0, pending = 0;
+      for (const item of items) {
+        const selected = item.def.options.find(o => o.id === item.answer.choice);
+        if (item.answer.hold || !selected || selected.price === undefined) pending++;
+        else total += selected.price;
+      }
+      return { currency: "JPY", total, pending, complete: pending === 0 };
+    }
+
+    function answerData() {
+      return {
+        schema: 1, round: { ...round }, descriptionDigest: digest, boardVersion: VERSION, date: today(),
+        decisions: decisions.map(d => ({ id: d.def.id, title: d.def.title, note: d.def.note ?? "", items: d.items.map(item => {
+          const selected = item.def.options.find(o => o.id === item.answer.choice);
+          return { id: item.def.id, title: item.def.title, question: item.def.question, state: item.answer.hold ? "held" : selected ? "selected" : "unselected", choice: selected ? { id: selected.id, label: selected.label, ...(round.pricing ? { price: selected.price ?? null } : {}) } : null, recommended: item.def.options.find(o => o.recommended)?.id ?? null, comment: item.answer.comment, seen: [...item.answer.seen] };
+        }) })),
+        ...(round.pricing ? { pricing: totals() } : {}),
+      };
+    }
+
     function answerText() {
+      if (round.pricing) {
+        const t = totals();
+        totalBox.textContent = `${money(t.total)}${t.pending ? `（未確定 ${t.pending} 項目）` : "（全項目確定）"}`;
+      }
+      if (answerFormat === "json") return JSON.stringify(answerData(), null, 2) + "\n";
+      if (answerFormat === "csv") {
+        const data = answerData();
+        const rows = [["回ID", "回", "比較元", "回答先", "記述", "器", "回答日", "裁定点ID", "裁定点", "注記", "項目ID", "項目", "問い", "状態", "選択ID", "選択", "推奨ID", "コメント", "閲覧", "金額", "通貨", "合計", "未確定数"]];
+        for (const d of data.decisions) for (const item of d.items) rows.push([round.id, round.title, round.source ?? "", round.answerTo ?? "", digest, VERSION, data.date, d.id, d.title, d.note, item.id, item.title, item.question, item.state, item.choice?.id ?? "", item.choice?.label ?? "", item.recommended ?? "", item.comment, item.seen.join(";"), item.choice?.price ?? "", data.pricing?.currency ?? "", data.pricing?.total ?? "", data.pricing?.pending ?? ""]);
+        const cell = value => { let s = String(value); if (/^[\s]*[=+@-]/.test(s)) s = "'" + s; return '"' + s.replaceAll('"', '""') + '"'; };
+        return rows.map(row => row.map(cell).join(",")).join("\r\n") + "\r\n";
+      }
+      const markdown = markdownAnswer();
+      return answerFormat === "text" ? markdown.replace(/^#{1,2} /gm, "").replace(/^- /gm, "").replace(/^  - /gm, "  ") : markdown;
+    }
+
+    function markdownAnswer() {
       const done = items.filter(isDone).length;
       const held = items.filter((i) => i.answer.hold).length;
       const lines = [`# 回答：${round.title}（${round.id}）`];
@@ -892,12 +1001,17 @@
           lines.push(
             `- ${item.def.id} ${item.def.title}: ${pick}${rec} · 見た: ${seen}`,
           );
+          if (round.pricing && k >= 0) lines.push(`  - 金額: ${item.def.options[k].price === undefined ? "未設定" : money(item.def.options[k].price)}`);
           const comment = a.comment.trim();
           if (comment)
             lines.push(
               `  - コメント: ${comment.split(/\r?\n/).join("\n    ")}`,
             );
         }
+      }
+      if (round.pricing) {
+        const t = totals();
+        lines.push("", `合計: ${money(t.total)}（${t.currency}・未確定 ${t.pending} 項目）`);
       }
       return `${lines.join("\n")}\n`;
     }
@@ -934,11 +1048,11 @@
 
     function saveAnswer() {
       const url = URL.createObjectURL(
-        new Blob([answerBox.value], { type: "text/markdown;charset=utf-8" }),
+        new Blob([answerBox.value], { type: `${formatInfo[answerFormat][2]};charset=utf-8` }),
       );
       const link = h("a", {
         href: url,
-        download: `${round.id}-answer.md`,
+        download: `${round.id}-answer.${formatInfo[answerFormat][1]}`,
         hidden: true,
       });
       document.body.append(link);
