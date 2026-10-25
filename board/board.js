@@ -138,16 +138,8 @@
     if (inline) {
       try {
         const envelope = JSON.parse(inline.textContent);
-        const bytes = new TextEncoder().encode(JSON.stringify(envelope.payload));
-        const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), n => n.toString(16).padStart(2, "0")).join("");
-        if (hash !== envelope.sha256) throw Error("内包データが発行後に変更されています");
-        const errors = V.validate(envelope.payload.def);
-        if (errors.length) throw Error(errors.map(e => `${e.path}: ${e.message}`).join("\n"));
-        for (const image of V.listImages(envelope.payload.def)) {
-          if (!Object.hasOwn(envelope.payload.assets, image.path) || !/^data:image\/(png|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/.test(envelope.payload.assets[image.path])) throw Error(`内包画像が不正: ${image.path}`);
-        }
-        embedded = envelope.payload;
-        define(embedded.def);
+        if (envelope.sealed) unlock(envelope.sealed);
+        else await openPackage(envelope);
       } catch (error) { showErrors([{ path: "発行データ", message: error.message }]); }
       return;
     }
@@ -166,6 +158,56 @@
     script.onerror = () =>
       showErrors([{ path: roundSrc, message: "記述ファイルを読めない" }]);
     document.body.append(script);
+  }
+
+  async function openPackage(envelope) {
+    const bytes = new TextEncoder().encode(JSON.stringify(envelope.payload));
+    const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), n => n.toString(16).padStart(2, "0")).join("");
+    if (hash !== envelope.sha256) throw Error("内包データが発行後に変更されています");
+    const errors = V.validate(envelope.payload.def);
+    if (errors.length) throw Error(errors.map(e => `${e.path}: ${e.message}`).join("\n"));
+    for (const image of V.listImages(envelope.payload.def)) {
+      if (!Object.hasOwn(envelope.payload.assets, image.path) || !/^data:image\/(png|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/.test(envelope.payload.assets[image.path])) throw Error(`内包画像が不正: ${image.path}`);
+    }
+    embedded = envelope.payload;
+    define(embedded.def);
+  }
+
+  // A sealed package holds the whole plain envelope, so nothing of the round is
+  // readable before the password opens it. A wrong password may be retried.
+  function unlock(sealed) {
+    const input = h("input", { type: "password", id: "unlock-password", autocomplete: "current-password", required: true });
+    const message = h("p", { class: "unlock-error", role: "alert" });
+    const button = h("button", { type: "submit" }, "開く");
+    const form = h(
+      "form",
+      { class: "unlock", "aria-labelledby": "unlock-title" },
+      h("h1", { id: "unlock-title" }, "パスワード"),
+      h("label", { for: "unlock-password", class: "sr-only" }, "パスワード"),
+      input,
+      button,
+      message,
+    );
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      button.disabled = true;
+      message.textContent = "";
+      let plain;
+      try {
+        plain = await globalThis.RulingBoardSeal.open(sealed, input.value);
+      } catch (error) {
+        message.textContent = error.message;
+        button.disabled = false;
+        input.select();
+        return;
+      }
+      document.body.classList.remove("is-locked");
+      try { await openPackage(JSON.parse(plain)); } catch (error) { showErrors([{ path: "発行データ", message: error.message }]); }
+    });
+    document.body.classList.add("is-locked");
+    $("main").removeAttribute("aria-busy");
+    $("main").replaceChildren(form);
+    input.focus();
   }
 
   /* ---------- the board ---------- */

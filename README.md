@@ -1,6 +1,6 @@
 # ui-ruling-board
 
-ローカルの発行画面は `npm run build:author` で `artifacts/author.html` に生成できる。項目・画像・回答形式・金額を設定し、検査後に回答用の単一HTMLを保存する。使い方と発行条件は [発行用HTMLの手順](docs/AUTHORING.md) を参照。
+ローカルの発行画面は `npm run build:author` で `artifacts/author.html` に生成できる。項目・画像・回答形式・金額を設定し、検査後に回答用の単一HTMLを保存する。パスワードを付けると、パスワードを入れないと開けないHTMLになる。使い方と発行条件は [発行用HTMLの手順](docs/AUTHORING.md) を参照。
 
 UI の配置や見た目を、用意した画像で比べて 1 項目ずつ裁定するための、依存のない比較 HTML。
 

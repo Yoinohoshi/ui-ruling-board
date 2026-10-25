@@ -121,6 +121,73 @@ test("単一HTML内の画像差替えを起動時に検出する", async ({ page
   await expect(page.locator(".error-list")).toContainText("発行後に変更");
 });
 
+const PACKAGE = /<script id="ruling-board-package" type="application\/json">([\s\S]*?)<\/script>/;
+
+test("パスワードを付けた単一HTMLは、記述も画像も平文で持たず、正しいパスワードでだけ開く", async ({ page, context }) => {
+  const errors = [], requests = [];
+  page.on("pageerror", e => errors.push(e.message));
+  context.on("request", request => { if (/^https?:/.test(request.url())) requests.push(request.url()); });
+  await sample(page);
+  const title = "封をした回の題";
+  await page.locator("#round-title").fill(title);
+  await preview(page);
+  const plain = test.info().outputPath("plain.html"); await save(page, "#publish", plain);
+  const plainHtml = fs.readFileSync(plain, "utf8");
+  const assets = Object.values(JSON.parse(PACKAGE.exec(plainHtml)[1]).payload.assets);
+  const secrets = [title, "保存ボタン", "どちらの案を選びますか", ...assets.map(data => data.slice(-200))];
+  // Control: the unsealed output carries every probe, so their absence below means something.
+  for (const secret of secrets) expect(plainHtml).toContain(secret);
+  await page.locator("#seal-password").fill("正しい pass 123");
+  await page.locator("#seal-confirm").fill("正しい pass 123");
+  const sealed = test.info().outputPath("isolated", "sealed.html"); await save(page, "#publish", sealed);
+  await expect(page.locator("#status")).toContainText("パスワードで暗号化した");
+  const sealedHtml = fs.readFileSync(sealed, "utf8");
+  for (const secret of secrets) expect(sealedHtml).not.toContain(secret);
+  expect(Object.keys(JSON.parse(PACKAGE.exec(sealedHtml)[1]))).toEqual(["schema", "sealed"]);
+  await page.goto(url(sealed));
+  await expect(page.locator("body")).toHaveClass(/is-locked/);
+  await expect(page.locator("#unlock-password")).toBeFocused();
+  await page.locator("#unlock-password").fill("違う");
+  await page.getByRole("button", { name: "開く" }).click();
+  await expect(page.locator(".unlock-error")).toHaveText("パスワードが違うか、データが壊れています");
+  await expect(page.locator("body")).not.toHaveClass(/is-ready/);
+  await page.locator("#unlock-password").fill("正しい pass 123");
+  await page.getByRole("button", { name: "開く" }).click();
+  await expect(page.locator("body")).toHaveClass(/is-ready/);
+  await expect(page.locator("body")).not.toHaveClass(/is-locked/);
+  await expect(page.locator(".round-title")).toContainText(title);
+  await page.locator('input[value="option:a"]').check();
+  await expect(page.locator("#price-total")).toHaveText("1,000 円（全項目確定）");
+  expect(errors).toEqual([]); expect(requests).toEqual([]);
+});
+
+test("パスワードと確認が違えば保存しない", async ({ page }) => {
+  await sample(page); await preview(page);
+  let downloads = 0; page.on("download", () => downloads++);
+  await page.locator("#seal-password").fill("one");
+  await page.locator("#seal-confirm").fill("two");
+  await page.locator("#publish").click();
+  await expect(page.locator("#status")).toContainText("一致しません");
+  expect(downloads).toBe(0);
+});
+
+test("封をした暗号文の 1 字の改変は、正しいパスワードでも開かない", async ({ page }) => {
+  await sample(page); await preview(page);
+  await page.locator("#seal-password").fill("pw"); await page.locator("#seal-confirm").fill("pw");
+  const output = test.info().outputPath("sealed.html"); await save(page, "#publish", output);
+  let html = fs.readFileSync(output, "utf8");
+  const envelope = JSON.parse(PACKAGE.exec(html)[1]);
+  const at = envelope.sealed.data.length >> 1;
+  envelope.sealed.data = envelope.sealed.data.slice(0, at) + (envelope.sealed.data[at] === "A" ? "B" : "A") + envelope.sealed.data.slice(at + 1);
+  html = html.replace(PACKAGE, () => `<script id="ruling-board-package" type="application/json">${JSON.stringify(envelope)}</script>`);
+  const corrupt = test.info().outputPath("sealed-corrupt.html"); fs.writeFileSync(corrupt, html);
+  await page.goto(url(corrupt));
+  await page.locator("#unlock-password").fill("pw");
+  await page.getByRole("button", { name: "開く" }).click();
+  await expect(page.locator(".unlock-error")).toHaveText("パスワードが違うか、データが壊れています");
+  await expect(page.locator("body")).not.toHaveClass(/is-ready/);
+});
+
 test("狭幅とキーボードで発行画面を操作できる", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 }); await sample(page);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

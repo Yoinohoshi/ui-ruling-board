@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const read = name => readFileSync(resolve(root, name), "utf8").replaceAll("\r\n", "\n");
 const hash = value => createHash("sha256").update(value).digest("hex");
-const inputs = ["author/index.html", "author/author.css", "author/author.js", "board/index.html", "board/board.css", "board/board.js", "board/validate.js", "shared/pixels.js", "shared/prepare.js", "shared/browser-images.js", "scripts/build-author.mjs"];
+const inputs = ["author/index.html", "author/author.css", "author/author.js", "board/index.html", "board/board.css", "board/board.js", "board/validate.js", "shared/pixels.js", "shared/prepare.js", "shared/browser-images.js", "shared/seal.js", "scripts/build-author.mjs"];
 const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
 export function buildAuthor(output) {
   let commit = null, dirty = true;
@@ -21,8 +21,8 @@ export function buildAuthor(output) {
   } catch { /* Unknown/untracked templates may preview but may not publish. */ }
   const source = { commit, dirty, files: Object.fromEntries(inputs.map(name => [name, hash(read(name))])) };
   const board = read("board/board.js");
-  const template = { version: /const VERSION = "([^"]+)"/.exec(board)[1], html: read("board/index.html"), css: read("board/board.css"), board, validate: read("board/validate.js"), source };
-  const scripts = ["board/validate.js", "shared/pixels.js", "shared/prepare.js", "shared/browser-images.js", "author/author.js"].map(name => `<script>${read(name).replace(/<\/script/gi, "<\\/script")}</script>`).join("\n");
+  const template = { version: /const VERSION = "([^"]+)"/.exec(board)[1], html: read("board/index.html"), css: read("board/board.css"), board, validate: read("board/validate.js"), seal: read("shared/seal.js"), source };
+  const scripts = ["board/validate.js", "shared/pixels.js", "shared/prepare.js", "shared/browser-images.js", "shared/seal.js", "author/author.js"].map(name => `<script>${read(name).replace(/<\/script/gi, "<\\/script")}</script>`).join("\n");
   const html = read("author/index.html").replace("/*AUTHOR_CSS*/", () => read("author/author.css")).replace("/*BOARD_TEMPLATE*/", () => JSON.stringify(template).replaceAll("<", "\\u003c")).replace("<!--AUTHOR_SCRIPTS-->", () => scripts);
   const target = resolve(output);
   if (inputs.some(name => target.toLowerCase() === resolve(root, name).toLowerCase())) throw Error("生成元を上書きできません");

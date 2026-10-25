@@ -139,7 +139,14 @@
     const script = value => `<script>${value.replace(/<\/script/gi, "<\\/script")}<` + "/script>";
     return template.html.replace('<link rel="stylesheet" href="board.css" />', () => `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; base-uri 'none'; form-action 'none'"><style>${template.css}</style>`)
       .replace('<script src="validate.js"></script>', () => `<script id="ruling-board-package" type="application/json">${safeJson(envelope)}<` + "/script>" + script(template.validate))
-      .replace('<script src="board.js"></script>', () => script(template.board));
+      .replace('<script src="board.js"></script>', () => script(template.seal) + script(template.board));
+  }
+  // The previewed plain envelope is sealed whole, then opened again before saving.
+  async function sealedHtml(envelope, password) {
+    const plain = JSON.stringify(envelope);
+    const sealed = await globalThis.RulingBoardSeal.seal(plain, password);
+    if (await globalThis.RulingBoardSeal.open(sealed, password) !== plain) throw Error("暗号化の確認に失敗しました");
+    return packageHtml({ schema: 1, sealed });
   }
   async function verifyPreview(html) {
     const frame = $("preview-frame");
@@ -182,10 +189,21 @@
     } catch (error) { ready = null; $("publish").disabled = true; status(error.message, true); }
     finally { busy = false; $("preview").disabled = false; }
   };
-  $("publish").onclick = () => {
-    if (!ready || ready.revision !== revision || template.source.dirty || !template.source.commit) return;
-    download(`${project.description.round.id}.html`, ready.html, "text/html;charset=utf-8");
-    status("HTMLの保存をブラウザへ渡しました。保存先・完了・取消はブラウザで確認してください。");
+  $("publish").onclick = async () => {
+    if (busy || !ready || ready.revision !== revision || template.source.dirty || !template.source.commit) return;
+    const password = $("seal-password").value;
+    if (password !== $("seal-confirm").value) { status("パスワードと確認が一致しません。", true); return; }
+    const current = ready;
+    let html = current.html;
+    if (password) {
+      busy = true; $("publish").disabled = true; status("暗号化しています…");
+      try { html = await sealedHtml(current.envelope, password); }
+      catch (error) { status(error.message, true); return; }
+      finally { busy = false; $("publish").disabled = ready !== current; }
+      if (ready !== current) { status("暗号化中に設定が変わりました。もう一度検査してください。", true); return; }
+    }
+    download(`${project.description.round.id}.html`, html, "text/html;charset=utf-8");
+    status(`${password ? "パスワードで暗号化した" : ""}HTMLの保存をブラウザへ渡しました。保存先・完了・取消はブラウザで確認してください。`);
   };
   $("save-evidence").onclick = () => { if (ready) download(`${project.description.round.id}-evidence.json`, json({ sha256: ready.envelope.sha256, evidence: ready.envelope.payload.evidence, source: template.source }), "application/json"); };
   $("save-project").onclick = () => download(`${/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(project.description.round.id) ? project.description.round.id : "review"}-project.json`, json(project), "application/json");
