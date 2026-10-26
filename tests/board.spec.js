@@ -835,7 +835,7 @@ test("回答案の中身と保存", async ({ page }) => {
   expect(lines.slice(0, 4)).toEqual([
     "# 回答：設定画面の配置（basic-r1）",
     "回答先: https://example.com/rounds/basic-r1",
-    `比較元: example · v1 / 記述: ${digest(def)} / 器: ui-ruling-board 0.5.0`,
+    `比較元: example · v1 / 記述: ${digest(def)} / 器: ui-ruling-board 0.5.1`,
     expect.stringMatching(/^回答日: \d{4}-\d{2}-\d{2} · 選択 2\/5（保留 1）$/),
   ]);
   expect(lines).toContain("## D2 メニュー");

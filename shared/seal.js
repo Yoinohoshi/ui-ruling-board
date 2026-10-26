@@ -4,6 +4,9 @@
 (function () {
   "use strict";
   const KDF = "PBKDF2-SHA-256", CIPHER = "AES-256-GCM", ITERATIONS = 600000, COMPRESSION = "gzip";
+  // Only the password guards a distributed file, so sealing follows NIST SP 800-63B-4's
+  // minimum for a single-factor password, counted in code points. Opening never checks it.
+  const MIN_LENGTH = 15;
   // The compression is bound into the authenticated data, so it cannot be switched off unnoticed.
   // Packages sealed before compression carry no field and keep the original data.
   const aad = compression => new TextEncoder().encode(`ui-ruling-board:sealed:1${compression ? `:${compression}` : ""}`);
@@ -18,7 +21,7 @@
     return crypto.subtle.deriveKey({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, base, { name: "AES-GCM", length: 256 }, false, [usage]);
   }
   async function seal(text, password) {
-    if (!password) throw Error("パスワードが空です");
+    if ([...password].length < MIN_LENGTH) throw Error(`パスワードは ${MIN_LENGTH} 字以上にしてください`);
     supported();
     const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
     const packed = await pipe(new TextEncoder().encode(text), new CompressionStream(COMPRESSION));
