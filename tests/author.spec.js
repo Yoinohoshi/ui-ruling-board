@@ -123,6 +123,8 @@ test("単一HTML内の画像差替えを起動時に検出する", async ({ page
 });
 
 const PACKAGE = /<script id="ruling-board-package" type="application\/json">([\s\S]*?)<\/script>/;
+// Exactly the 15 code points the seal requires, so the boundary itself is what passes.
+const PASSWORD = "正しい合言葉は十五字ちょうど。";
 
 test("パスワードを付けた単一HTMLは、記述も画像も平文で持たず、正しいパスワードでだけ開く", async ({ page, context }) => {
   const errors = [], requests = [];
@@ -138,8 +140,8 @@ test("パスワードを付けた単一HTMLは、記述も画像も平文で持�
   const secrets = [title, "保存ボタン", "どちらの案を選びますか", ...assets.map(data => data.slice(-200))];
   // Control: the unsealed output carries every probe, so their absence below means something.
   for (const secret of secrets) expect(plainHtml).toContain(secret);
-  await page.locator("#seal-password").fill("正しい pass 123");
-  await page.locator("#seal-confirm").fill("正しい pass 123");
+  await page.locator("#seal-password").fill(PASSWORD);
+  await page.locator("#seal-confirm").fill(PASSWORD);
   const sealed = test.info().outputPath("isolated", "sealed.html"); await save(page, "#publish", sealed);
   await expect(page.locator("#status")).toContainText("パスワードで暗号化した");
   const sealedHtml = fs.readFileSync(sealed, "utf8");
@@ -152,7 +154,7 @@ test("パスワードを付けた単一HTMLは、記述も画像も平文で持�
   await page.getByRole("button", { name: "開く" }).click();
   await expect(page.locator(".unlock-error")).toHaveText("パスワードが違うか、データが壊れています");
   await expect(page.locator("body")).not.toHaveClass(/is-ready/);
-  await page.locator("#unlock-password").fill("正しい pass 123");
+  await page.locator("#unlock-password").fill(PASSWORD);
   await page.getByRole("button", { name: "開く" }).click();
   await expect(page.locator("body")).toHaveClass(/is-ready/);
   await expect(page.locator("body")).not.toHaveClass(/is-locked/);
@@ -172,13 +174,24 @@ test("パスワードと確認が違えば保存しない", async ({ page }) => 
   expect(downloads).toBe(0);
 });
 
+test("15 字に満たないパスワードでは封をしない（字数はコード位置で数える）", async ({ page }) => {
+  await sample(page); await preview(page);
+  let downloads = 0; page.on("download", () => downloads++);
+  // 14 code points but 28 UTF-16 units: a length check on the string would let it through.
+  const short = "😀".repeat(14);
+  await page.locator("#seal-password").fill(short); await page.locator("#seal-confirm").fill(short);
+  await page.locator("#publish").click();
+  await expect(page.locator("#status")).toHaveText("パスワードは 15 字以上にしてください");
+  expect(downloads).toBe(0);
+});
+
 async function sealedSample(page) {
   await sample(page); await preview(page);
-  await page.locator("#seal-password").fill("pw"); await page.locator("#seal-confirm").fill("pw");
+  await page.locator("#seal-password").fill(PASSWORD); await page.locator("#seal-confirm").fill(PASSWORD);
   const output = test.info().outputPath("sealed.html"); await save(page, "#publish", output);
   return fs.readFileSync(output, "utf8");
 }
-async function openWith(page, html, name, password = "pw") {
+async function openWith(page, html, name, password = PASSWORD) {
   const file = test.info().outputPath(name); fs.writeFileSync(file, html);
   await page.goto(url(file));
   await page.locator("#unlock-password").fill(password);
@@ -211,7 +224,7 @@ test("圧縮の欄が無い旧形式（0.4.0 の最初の封）も開く", async
   const html = await sealedSample(page);
   const { sealed } = JSON.parse(PACKAGE.exec(html)[1]);
   const subtle = globalThis.crypto.subtle, enc = new TextEncoder();
-  const keyOf = async (salt, usage) => subtle.deriveKey({ name: "PBKDF2", hash: "SHA-256", salt, iterations: sealed.iterations }, await subtle.importKey("raw", enc.encode("pw"), "PBKDF2", false, ["deriveKey"]), { name: "AES-GCM", length: 256 }, false, [usage]);
+  const keyOf = async (salt, usage) => subtle.deriveKey({ name: "PBKDF2", hash: "SHA-256", salt, iterations: sealed.iterations }, await subtle.importKey("raw", enc.encode(PASSWORD), "PBKDF2", false, ["deriveKey"]), { name: "AES-GCM", length: 256 }, false, [usage]);
   const salt = Buffer.from(sealed.salt, "base64"), iv = Buffer.from(sealed.iv, "base64");
   const packed = await subtle.decrypt({ name: "AES-GCM", iv, additionalData: enc.encode("ui-ruling-board:sealed:1:gzip") }, await keyOf(salt, "decrypt"), Buffer.from(sealed.data, "base64"));
   const plain = zlib.gunzipSync(Buffer.from(packed));
